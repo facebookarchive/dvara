@@ -4,20 +4,25 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"net"
 	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/facebookgo/rpool"
+	"github.com/facebookgo/stats"
 )
 
 const headerLen = 16
 
 var (
-	errZeroMaxConnections = errors.New("dvara: MaxConnections cannot be 0")
-	errNormalClose        = errors.New("dvara: normal close")
-	errClientReadTimeout  = errors.New("dvara: client read timeout")
+	errZeroMaxConnections          = errors.New("dvara: MaxConnections cannot be 0")
+	errZeroMaxPerClientConnections = errors.New("dvara: MaxPerClientConnections cannot be 0")
+	errNormalClose                 = errors.New("dvara: normal close")
+	errClientReadTimeout           = errors.New("dvara: client read timeout")
+
+	timeInPast = time.Now()
 )
 
 // Proxy sends stuff from clients to mongo servers.
@@ -28,12 +33,11 @@ type Proxy struct {
 	ProxyAddr      string       // Address for incoming client connections
 	MongoAddr      string       // Address for destination Mongo server
 
-	wg                  sync.WaitGroup
-	closed              bool
-	closedMutex         sync.RWMutex
-	serverConnPool      chan net.Conn
-	numServerConns      uint
-	numServerConnsMutex sync.Mutex
+	wg                      sync.WaitGroup
+	closed                  chan struct{}
+	serverPool              rpool.Pool
+	stats                   stats.Client
+	maxPerClientConnections *maxPerClientConnections
 }
 
 // String representation for debugging.
@@ -46,12 +50,44 @@ func (p *Proxy) Start() error {
 	if p.ReplicaSet.MaxConnections == 0 {
 		return errZeroMaxConnections
 	}
+	if p.ReplicaSet.MaxPerClientConnections == 0 {
+		return errZeroMaxPerClientConnections
+	}
 
-	p.closedMutex.Lock()
-	p.closed = false
-	p.closedMutex.Unlock()
+	p.closed = make(chan struct{})
+	p.maxPerClientConnections = newMaxPerClientConnections(p.ReplicaSet.MaxPerClientConnections)
+	p.serverPool = rpool.Pool{
+		New:               p.newServerConn,
+		CloseErrorHandler: p.serverCloseErrorHandler,
+		Max:               p.ReplicaSet.MaxConnections,
+		MinIdle:           p.ReplicaSet.MinIdleConnections,
+		IdleTimeout:       p.ReplicaSet.ServerIdleTimeout,
+		ClosePoolSize:     p.ReplicaSet.ServerClosePoolSize,
+	}
 
-	p.serverConnPool = make(chan net.Conn, p.ReplicaSet.MaxConnections)
+	// plug stats if we can
+	if p.ReplicaSet.Stats != nil {
+		// Drop the default port suffix to make them pretty in production.
+		dbName := strings.TrimSuffix(p.MongoAddr, ":27017")
+
+		// We want 2 sets of keys, one specific to the proxy, and another shared
+		// with others.
+		p.serverPool.Stats = stats.PrefixClient(
+			[]string{
+				"mongoproxy.server.pool.",
+				fmt.Sprintf("mongoproxy.%s.server.pool.", dbName),
+			},
+			p.ReplicaSet.Stats,
+		)
+		p.stats = stats.PrefixClient(
+			[]string{
+				"mongoproxy.",
+				fmt.Sprintf("mongoproxy.%s.", dbName),
+			},
+			p.ReplicaSet.Stats,
+		)
+	}
+
 	go p.clientAcceptLoop()
 
 	return nil
@@ -63,29 +99,14 @@ func (p *Proxy) Stop() error {
 }
 
 func (p *Proxy) stop(hard bool) error {
-	p.closedMutex.Lock()
-	p.closed = true
-	p.closedMutex.Unlock()
-
 	if err := p.ClientListener.Close(); err != nil {
 		return err
 	}
+	close(p.closed)
 	if !hard {
 		p.wg.Wait()
 	}
-
-	go func() {
-		for c := range p.serverConnPool {
-			p.ReplicaSet.ServerDisconnected.Mark(1)
-			p.ReplicaSet.ServersConnected.Dec(1)
-			if err := c.Close(); err != nil {
-				p.ReplicaSet.ServerDisconnectFailure.Mark(1)
-				p.Log.Error(err)
-			}
-		}
-	}()
-	close(p.serverConnPool)
-
+	p.serverPool.Close()
 	return nil
 }
 
@@ -106,131 +127,39 @@ func (p *Proxy) checkRSChanged() bool {
 	return false
 }
 
-// isClosed returns true if we're in the process of closing the proxy.
-func (p *Proxy) isClosed() bool {
-	p.closedMutex.RLock()
-	defer p.closedMutex.RUnlock()
-	return p.closed
-}
-
-// refreshServerConn will disconnect the given conn if possible, and
-// return a fresh connection.
-func (p *Proxy) refreshServerConn(oldC net.Conn) (net.Conn, error) {
-	if oldC != nil {
-		p.ReplicaSet.ServerDisconnected.Mark(1)
-		p.ReplicaSet.ServersConnected.Dec(1)
-		if err := oldC.Close(); err != nil {
-			p.ReplicaSet.ServerDisconnectFailure.Mark(1)
-			p.Log.Error(err)
-		}
-		if p.checkRSChanged() {
-			return nil, errNormalClose
-		}
-	}
-
-	// We retry indefinitely, with an exponential sleep in between retries.
-	retryCount := int64(0)
+// Open up a new connection to the server. Retry 7 times, doubling the sleep
+// each time. This means we'll a total of 12.75 seconds with the last wait
+// being 6.4 seconds.
+func (p *Proxy) newServerConn() (io.Closer, error) {
 	retrySleep := 50 * time.Millisecond
-
-	for {
+	for retryCount := 7; retryCount > 0; retryCount-- {
 		c, err := net.Dial("tcp", p.MongoAddr)
 		if err == nil {
-			p.ReplicaSet.ServerConnected.Mark(1)
-			p.ReplicaSet.ServersConnected.Inc(1)
 			return c, nil
 		}
-		p.ReplicaSet.ServerConnectFailure.Mark(1)
 		p.Log.Error(err)
 
-		// If we're closing, then we're done.
-		if p.isClosed() {
-			return nil, errNormalClose
-		}
-
+		// abort if rs changed
 		if p.checkRSChanged() {
 			return nil, errNormalClose
 		}
 		time.Sleep(retrySleep)
-
-		retryCount++
-		retrySleep = time.Duration((2^retryCount)*int64(retrySleep) + rand.Int63n(int64(retrySleep)))
+		retrySleep = retrySleep * 2
 	}
+	return nil, fmt.Errorf("could not connect to %s", p.MongoAddr)
 }
 
-// getServerConn returns a server connection from our pool, but will allow us
-// to identify if we don't have enough connections for our clients.
-func (p *Proxy) getServerConn() net.Conn {
-	logged := false
-	maxEstablished := false
-	for {
-		select {
-		case c := <-p.serverConnPool:
-			return c
-		default:
-			if p.isClosed() {
-				return nil // this is handled by the caller
-			}
-
-			// Hot path to only have to Lock once if we've already opened
-			// MaxConnections.
-			if maxEstablished {
-				p.ReplicaSet.ServerPoolRecvBlocked.Mark(1)
-				continue
-			}
-
-			p.numServerConnsMutex.Lock()
-
-			// This is the case where we're blocked and can't open up a new
-			// connection since we've opened up MaxConnections.
-			if p.numServerConns >= p.ReplicaSet.MaxConnections {
-				p.numServerConnsMutex.Unlock()
-				maxEstablished = true
-				p.ReplicaSet.ServerPoolRecvBlocked.Mark(1)
-				if !logged {
-					logged = true
-					p.Log.Warn("serverConnPool recv blocked")
-				}
-				continue
-			}
-
-			// We're going to open up a new connection to the server.
-			c, err := p.refreshServerConn(nil)
-			if err != nil {
-				p.numServerConnsMutex.Unlock()
-				// errNormalClose here means we're closing the proxy, so we return a
-				// nil net.Conn, which is handled by callers.
-				if err == errNormalClose {
-					return nil
-				}
-				p.Log.Errorf("ignoring server connection failure: %s", err)
-				continue
-			}
-			p.numServerConns++
-			p.numServerConnsMutex.Unlock()
-			return c
-		}
+// getServerConn gets a server connection from the pool.
+func (p *Proxy) getServerConn() (net.Conn, error) {
+	c, err := p.serverPool.Acquire()
+	if err != nil {
+		return nil, err
 	}
+	return c.(net.Conn), nil
 }
 
-// putServerConn returns a server connection to our pool, but will allow us
-// to identify if we block on this indicating we need a bigger channel.
-func (p *Proxy) putServerConn(c net.Conn) {
-	logged := false
-	for {
-		select {
-		case p.serverConnPool <- c:
-			return
-		default:
-			if p.isClosed() {
-				return
-			}
-			p.ReplicaSet.ServerPoolSendBlocked.Mark(1)
-			if !logged {
-				logged = true
-				p.Log.Warn("serverConnPool send blocked")
-			}
-		}
-	}
+func (p *Proxy) serverCloseErrorHandler(err error) {
+	p.Log.Error(err)
 }
 
 // proxyMessage proxies a message, possibly it's response, and possibly a
@@ -242,7 +171,7 @@ func (p *Proxy) proxyMessage(
 	lastError *LastError,
 ) error {
 
-	p.Log.Infof("proxying message %s from %s for %s", h, client.RemoteAddr(), p)
+	p.Log.Debugf("proxying message %s from %s for %s", h, client.RemoteAddr(), p)
 	deadline := time.Now().Add(p.ReplicaSet.MessageTimeout)
 	server.SetDeadline(deadline)
 	client.SetDeadline(deadline)
@@ -250,14 +179,14 @@ func (p *Proxy) proxyMessage(
 	// OpQuery may need to be transformed and need special handling in order to
 	// make the proxy transparent.
 	if h.OpCode == OpQuery {
-		p.ReplicaSet.MessageWithResponse.Mark(1)
+		stats.BumpSum(p.stats, "message.with.response", 1)
 		return p.ReplicaSet.ProxyQuery.Proxy(h, client, server, lastError)
 	}
 
 	// Anything besides a getlasterror call (which requires an OpQuery) resets
 	// the lastError.
 	if lastError.Exists() {
-		p.Log.Info("reset getLastError cache")
+		p.Log.Debug("reset getLastError cache")
 		lastError.Reset()
 	}
 
@@ -274,7 +203,7 @@ func (p *Proxy) proxyMessage(
 
 	// For Ops with responses we proxy the raw response message over.
 	if h.OpCode.HasResponse() {
-		p.ReplicaSet.MessageWithResponse.Mark(1)
+		stats.BumpSum(p.stats, "message.with.response", 1)
 		if err := copyMessage(client, server); err != nil {
 			p.Log.Error(err)
 			return err
@@ -305,9 +234,19 @@ func (p *Proxy) clientAcceptLoop() {
 // clientServeLoop loops on a single client connected to the proxy and
 // dispatches its requests.
 func (p *Proxy) clientServeLoop(c net.Conn) {
+	remoteIP := c.RemoteAddr().(*net.TCPAddr).IP.String()
+
+	// enforce per-client max connection limit
+	if p.maxPerClientConnections.inc(remoteIP) {
+		c.Close()
+		stats.BumpSum(p.stats, "client.rejected.max.connections", 1)
+		p.Log.Errorf("rejecting client connection due to max connections limit: %s", remoteIP)
+		return
+	}
+
 	c = teeIf(fmt.Sprintf("client %s <=> %s", c.RemoteAddr(), p), c)
 	p.Log.Infof("client %s connected to %s", c.RemoteAddr(), p)
-	p.ReplicaSet.ClientConnected.Mark(1)
+	stats.BumpSum(p.stats, "client.connected", 1)
 	p.ReplicaSet.ClientsConnected.Inc(1)
 	defer func() {
 		p.ReplicaSet.ClientsConnected.Dec(1)
@@ -316,6 +255,7 @@ func (p *Proxy) clientServeLoop(c net.Conn) {
 		if err := c.Close(); err != nil {
 			p.Log.Error(err)
 		}
+		p.maxPerClientConnections.dec(remoteIP)
 	}()
 
 	var lastError LastError
@@ -328,38 +268,33 @@ func (p *Proxy) clientServeLoop(c net.Conn) {
 			return
 		}
 
-		serverConn := p.getServerConn()
-		if serverConn == nil {
-			// This is a legit scenario when we're closing since the closed
-			// serverConnPool chan will return the default nil value.
-			if !p.isClosed() {
-				p.Log.Error("dvara: got nil from getServerConn")
+		mpt := stats.BumpTime(p.stats, "message.proxy.time")
+		serverConn, err := p.getServerConn()
+		if err != nil {
+			if err != errNormalClose {
+				p.Log.Error(err)
 			}
 			return
 		}
 
-		t := p.ReplicaSet.ServerConnHeld.Start()
+		scht := stats.BumpTime(p.stats, "server.conn.held.time")
 		for {
 			err := p.proxyMessage(h, c, serverConn, &lastError)
 			if err != nil {
+				p.serverPool.Discard(serverConn)
 				p.Log.Error(err)
-
-				serverConn, sErr := p.refreshServerConn(serverConn)
-				if sErr != nil {
-					p.Log.Error(sErr)
-				} else {
-					p.putServerConn(serverConn)
-				}
-
-				p.ReplicaSet.MessageProxyFailure.Mark(1)
+				stats.BumpSum(p.stats, "message.proxy.error", 1)
 				if ne, ok := err.(net.Error); ok && ne.Timeout() {
-					p.ReplicaSet.MessageTimeoutHit.Mark(1)
+					stats.BumpSum(p.stats, "message.proxy.timeout", 1)
 				}
 				if err == errRSChanged {
 					go p.ReplicaSet.Restart()
 				}
 				return
 			}
+
+			// One message was proxied, stop it's timer.
+			mpt.End()
 
 			if !h.OpCode.IsMutation() {
 				break
@@ -368,7 +303,8 @@ func (p *Proxy) clientServeLoop(c net.Conn) {
 			// If the operation we just performed was a mutation, we always make the
 			// follow up request on the same server because it's possibly a getLastErr
 			// call which expects this behavior.
-			p.ReplicaSet.MessageWithMutation.Mark(1)
+
+			stats.BumpSum(p.stats, "message.with.mutation", 1)
 			h, err = p.gleClientReadHeader(c)
 			if err != nil {
 				// Client did not make _any_ query within the GetLastErrorTimeout.
@@ -382,13 +318,16 @@ func (p *Proxy) clientServeLoop(c net.Conn) {
 				}
 				// We need to return our server to the pool (it's still good as far
 				// as we know).
-				p.putServerConn(serverConn)
+				p.serverPool.Release(serverConn)
 				return
 			}
+
+			// Successfully read message when waiting for the getLastError call.
+			mpt = stats.BumpTime(p.stats, "message.proxy.time")
 		}
-		p.putServerConn(serverConn)
-		t.Stop()
-		p.ReplicaSet.MessageProxySuccess.Mark(1)
+		p.serverPool.Release(serverConn)
+		scht.End()
+		stats.BumpSum(p.stats, "message.proxy.success", 1)
 	}
 }
 
@@ -398,7 +337,7 @@ func (p *Proxy) clientServeLoop(c net.Conn) {
 func (p *Proxy) idleClientReadHeader(c net.Conn) (*messageHeader, error) {
 	h, err := p.clientReadHeader(c, p.ReplicaSet.ClientIdleTimeout)
 	if err == errClientReadTimeout {
-		p.ReplicaSet.ClientIdleTimeoutHit.Mark(1)
+		stats.BumpSum(p.stats, "client.idle.timeout", 1)
 	}
 	return h, err
 }
@@ -406,51 +345,62 @@ func (p *Proxy) idleClientReadHeader(c net.Conn) (*messageHeader, error) {
 func (p *Proxy) gleClientReadHeader(c net.Conn) (*messageHeader, error) {
 	h, err := p.clientReadHeader(c, p.ReplicaSet.GetLastErrorTimeout)
 	if err == errClientReadTimeout {
-		p.ReplicaSet.GetLastErrorTimeoutHit.Mark(1)
+		stats.BumpSum(p.stats, "client.gle.timeout", 1)
 	}
 	return h, err
 }
 
 func (p *Proxy) clientReadHeader(c net.Conn, timeout time.Duration) (*messageHeader, error) {
-	t := p.ReplicaSet.ClientReadHeaderWait.Start()
-	now := time.Now()
-	deadline := now.Add(timeout)
-	for now.Before(deadline) {
-		// Proxy.Stop has been triggered.
-		if p.isClosed() {
-			p.ReplicaSet.ClientCleanDisconnect.Mark(1)
-			return nil, errNormalClose
-		}
-
-		// TODO deal with partial reads?
-		// Try to read the header.
-		c.SetReadDeadline(now.Add(p.ReplicaSet.MessageTimeout))
-		h, err := readHeader(c)
-
-		// Successfully read a header.
-		if err == nil {
-			t.Stop()
-			return h, nil
-		}
-
-		// Client side disconnected.
-		if err == io.EOF {
-			p.ReplicaSet.ClientCleanDisconnect.Mark(1)
-			return nil, errNormalClose
-		}
-
-		// We hit our ReadDeadline (1 round of MessageTimeout)
-		if ne, ok := err.(net.Error); ok && ne.Timeout() {
-			now = time.Now()
-			continue
-		}
-
-		// Some other unknown error.
-		p.ReplicaSet.ClientErrorDisconnect.Mark(1)
-		p.Log.Error(err)
-		return nil, err
+	t := stats.BumpTime(p.stats, "client.read.header.time")
+	type headerError struct {
+		header *messageHeader
+		error  error
 	}
-	return nil, errClientReadTimeout
+	resChan := make(chan headerError)
+
+	c.SetReadDeadline(time.Now().Add(timeout))
+	go func() {
+		h, err := readHeader(c)
+		resChan <- headerError{header: h, error: err}
+	}()
+
+	closed := false
+	var response headerError
+
+	select {
+	case response = <-resChan:
+		// all good
+	case <-p.closed:
+		closed = true
+		c.SetReadDeadline(timeInPast)
+		response = <-resChan
+	}
+
+	// Successfully read a header.
+	if response.error == nil {
+		t.End()
+		return response.header, nil
+	}
+
+	// Client side disconnected.
+	if response.error == io.EOF {
+		stats.BumpSum(p.stats, "client.clean.disconnect", 1)
+		return nil, errNormalClose
+	}
+
+	// We hit our ReadDeadline.
+	if ne, ok := response.error.(net.Error); ok && ne.Timeout() {
+		if closed {
+			stats.BumpSum(p.stats, "client.clean.disconnect", 1)
+			return nil, errNormalClose
+		}
+		return nil, errClientReadTimeout
+	}
+
+	// Some other unknown error.
+	stats.BumpSum(p.stats, "client.error.disconnect", 1)
+	p.Log.Error(response.error)
+	return nil, response.error
 }
 
 var teeIfEnable = os.Getenv("MONGOPROXY_TEE") == "1"
@@ -484,4 +434,41 @@ func teeIf(context string, c net.Conn) net.Conn {
 		}
 	}
 	return c
+}
+
+type maxPerClientConnections struct {
+	max    uint
+	counts map[string]uint
+	mutex  sync.Mutex
+}
+
+func newMaxPerClientConnections(max uint) *maxPerClientConnections {
+	return &maxPerClientConnections{
+		max:    max,
+		counts: make(map[string]uint),
+	}
+}
+
+func (m *maxPerClientConnections) inc(remoteIP string) bool {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	current := m.counts[remoteIP]
+	if current >= m.max {
+		return true
+	}
+	m.counts[remoteIP] = current + 1
+	return false
+}
+
+func (m *maxPerClientConnections) dec(remoteIP string) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	current := m.counts[remoteIP]
+
+	// delete rather than having entries with 0 connections
+	if current == 1 {
+		delete(m.counts, remoteIP)
+	} else {
+		m.counts[remoteIP] = current - 1
+	}
 }

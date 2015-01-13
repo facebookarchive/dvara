@@ -5,13 +5,14 @@ import (
 	"testing"
 	"time"
 
-	"labix.org/v2/mgo"
+	"gopkg.in/mgo.v2"
 
 	"github.com/facebookgo/ensure"
 	"github.com/facebookgo/gangliamr"
 	"github.com/facebookgo/inject"
 	"github.com/facebookgo/mgotest"
 	"github.com/facebookgo/startstop"
+	"github.com/facebookgo/stats"
 )
 
 var disableSlowTests = os.Getenv("GO_RUN_LONG_TEST") == ""
@@ -41,19 +42,24 @@ type Harness struct {
 
 func newHarnessInternal(url string, s stopper, t testing.TB) *Harness {
 	replicaSet := ReplicaSet{
-		Addrs:               url,
-		PortStart:           2000,
-		PortEnd:             3000,
-		MaxConnections:      5,
-		ClientIdleTimeout:   5 * time.Minute,
-		GetLastErrorTimeout: 5 * time.Minute,
-		MessageTimeout:      5 * time.Second,
+		Addrs:                   url,
+		PortStart:               2000,
+		PortEnd:                 3000,
+		MaxConnections:          5,
+		MinIdleConnections:      5,
+		ServerIdleTimeout:       5 * time.Minute,
+		ServerClosePoolSize:     5,
+		ClientIdleTimeout:       5 * time.Minute,
+		MaxPerClientConnections: 250,
+		GetLastErrorTimeout:     5 * time.Minute,
+		MessageTimeout:          5 * time.Second,
 	}
 	var log nopLogger
 	var graph inject.Graph
 	err := graph.Provide(
 		&inject.Object{Value: &log},
 		&inject.Object{Value: &replicaSet},
+		&inject.Object{Value: &stats.HookClient{}},
 	)
 	ensure.Nil(t, err)
 	ensure.Nil(t, graph.Populate())
@@ -119,8 +125,8 @@ func (h *Harness) Dial(u string) *mgo.Session {
 	session, err := mgo.Dial(u)
 	ensure.Nil(h.T, err, u)
 	session.SetSafe(&mgo.Safe{FSync: true, W: 1})
-	session.SetSyncTimeout(5 * time.Second)
-	session.SetSocketTimeout(5 * time.Second)
+	session.SetSyncTimeout(time.Minute)
+	session.SetSocketTimeout(time.Minute)
 	return session
 }
 

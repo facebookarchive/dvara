@@ -2,6 +2,7 @@ package dvara
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"net"
 	"os"
@@ -12,6 +13,13 @@ import (
 	"github.com/facebookgo/gangliamr"
 	"github.com/facebookgo/metrics"
 	"github.com/facebookgo/stackerr"
+	"github.com/facebookgo/stats"
+)
+
+var hardRestart = flag.Bool(
+	"hard_restart",
+	true,
+	"if true will drop clients on restart",
 )
 
 // Logger allows for simple text logging.
@@ -38,6 +46,9 @@ type ReplicaSet struct {
 	ReplicaSetStateCreator *ReplicaSetStateCreator `inject:""`
 	ProxyQuery             *ProxyQuery             `inject:""`
 
+	// Stats if provided will be used to record interesting stats.
+	Stats stats.Client `inject:""`
+
 	// Comma separated list of mongo addresses. This is the list of "seed"
 	// servers, and one of two conditions must be met for each entry here -- it's
 	// either alive and part of the same replica set as all others listed, or is
@@ -52,9 +63,25 @@ type ReplicaSet struct {
 	// Maximum number of connections that will be established to each mongo node.
 	MaxConnections uint
 
+	// MinIdleConnections is the number of idle server connections we'll keep
+	// around.
+	MinIdleConnections uint
+
+	// ServerIdleTimeout is the duration after which a server connection will be
+	// considered idle.
+	ServerIdleTimeout time.Duration
+
+	// ServerClosePoolSize is the number of goroutines that will handle closing
+	// server connections.
+	ServerClosePoolSize uint
+
 	// ClientIdleTimeout is how long until we'll consider a client connection
 	// idle and disconnect and release it's resources.
 	ClientIdleTimeout time.Duration
+
+	// MaxPerClientConnections is how many client connections are allowed from a
+	// single client.
+	MaxPerClientConnections uint
 
 	// GetLastErrorTimeout is how long we'll hold on to an acquired server
 	// connection expecting a possibly getLastError call.
@@ -64,29 +91,11 @@ type ReplicaSet struct {
 	// proxied.
 	MessageTimeout time.Duration
 
-	ClientCleanDisconnect   metrics.Meter
-	ClientConnected         metrics.Meter
-	ClientErrorDisconnect   metrics.Meter
-	ClientIdleTimeoutHit    metrics.Meter
-	ClientReadHeaderWait    metrics.Timer
-	ClientsConnected        metrics.Counter
-	GetLastErrorTimeoutHit  metrics.Meter
-	MessageProxyFailure     metrics.Meter
-	MessageProxySuccess     metrics.Meter
-	MessageTimeoutHit       metrics.Meter
-	MessageWithMutation     metrics.Meter
-	MessageWithResponse     metrics.Meter
-	ServerConnHeld          metrics.Timer
-	ServerConnectFailure    metrics.Meter
-	ServerConnected         metrics.Meter
-	ServerDisconnectFailure metrics.Meter
-	ServerDisconnected      metrics.Meter
-	ServerPoolRecvBlocked   metrics.Meter
-	ServerPoolSendBlocked   metrics.Meter
-	ServersConnected        metrics.Counter
+	ClientsConnected metrics.Counter
 
 	proxyToReal map[string]string
 	realToProxy map[string]string
+	ignoredReal map[string]ReplicaState
 	proxies     map[string]*Proxy
 	restarter   *sync.Once
 	lastState   *ReplicaSetState
@@ -95,14 +104,6 @@ type ReplicaSet struct {
 // RegisterMetrics registers the available metrics.
 func (r *ReplicaSet) RegisterMetrics(registry *gangliamr.Registry) {
 	gangliaGroup := []string{"dvara"}
-	r.ClientConnected = &gangliamr.Meter{
-		Name:   "client_connected",
-		Title:  "Client Connected",
-		Units:  "conn/sec",
-		Groups: gangliaGroup,
-	}
-	registry.Register(r.ClientConnected)
-
 	r.ClientsConnected = &gangliamr.Counter{
 		Name:   "clients_connected",
 		Title:  "Client Connected",
@@ -110,154 +111,13 @@ func (r *ReplicaSet) RegisterMetrics(registry *gangliamr.Registry) {
 		Groups: gangliaGroup,
 	}
 	registry.Register(r.ClientsConnected)
-
-	r.ClientCleanDisconnect = &gangliamr.Meter{
-		Name:   "client_clean_disconnect",
-		Title:  "Client Disconnected Cleanly",
-		Units:  "conn/sec",
-		Groups: gangliaGroup,
-	}
-	registry.Register(r.ClientCleanDisconnect)
-
-	r.ClientErrorDisconnect = &gangliamr.Meter{
-		Name:   "client_error_disconnect",
-		Title:  "Client Disconnected With Error",
-		Units:  "conn/sec",
-		Groups: gangliaGroup,
-	}
-	registry.Register(r.ClientErrorDisconnect)
-
-	r.ClientReadHeaderWait = &gangliamr.Timer{
-		Name:   "client_read_header_wait",
-		Title:  "Duration a Client ReadHeader was waiting",
-		Groups: gangliaGroup,
-	}
-	registry.Register(r.ClientReadHeaderWait)
-
-	r.ClientIdleTimeoutHit = &gangliamr.Meter{
-		Name:   "client_idle_timeout_hit",
-		Title:  "Client Idle Timeout Hit",
-		Units:  "timeout/sec",
-		Groups: gangliaGroup,
-	}
-	registry.Register(r.ClientIdleTimeoutHit)
-
-	r.ServersConnected = &gangliamr.Counter{
-		Name:   "servers_connected",
-		Title:  "Servers Connected",
-		Units:  "conn",
-		Groups: gangliaGroup,
-	}
-	registry.Register(r.ServersConnected)
-
-	r.ServerConnected = &gangliamr.Meter{
-		Name:   "server_connected",
-		Title:  "Server Connected",
-		Units:  "conn/sec",
-		Groups: gangliaGroup,
-	}
-	registry.Register(r.ServerConnected)
-
-	r.ServerConnectFailure = &gangliamr.Meter{
-		Name:   "server_connect_failure",
-		Title:  "Server Connect Failure",
-		Units:  "failure/sec",
-		Groups: gangliaGroup,
-	}
-	registry.Register(r.ServerConnectFailure)
-
-	r.ServerDisconnected = &gangliamr.Meter{
-		Name:   "server_disconnected",
-		Title:  "Server Disconnected",
-		Units:  "conn/sec",
-		Groups: gangliaGroup,
-	}
-	registry.Register(r.ServerDisconnected)
-
-	r.ServerDisconnectFailure = &gangliamr.Meter{
-		Name:   "server_disconnect_failure",
-		Title:  "Server Disconnect Failure",
-		Units:  "failure/sec",
-		Groups: gangliaGroup,
-	}
-	registry.Register(r.ServerDisconnectFailure)
-
-	r.ServerPoolRecvBlocked = &gangliamr.Meter{
-		Name:   "server_pool_recv_blocked",
-		Title:  "Server Pool Recv Blocked",
-		Units:  "conn/sec",
-		Groups: gangliaGroup,
-	}
-	registry.Register(r.ServerPoolRecvBlocked)
-
-	r.ServerPoolSendBlocked = &gangliamr.Meter{
-		Name:   "server_pool_send_blocked",
-		Title:  "Server Pool Send Blocked",
-		Units:  "conn/sec",
-		Groups: gangliaGroup,
-	}
-	registry.Register(r.ServerPoolSendBlocked)
-
-	r.MessageTimeoutHit = &gangliamr.Meter{
-		Name:   "message_timeout_hit",
-		Title:  "Message Timeout Hit",
-		Units:  "message/sec",
-		Groups: gangliaGroup,
-	}
-	registry.Register(r.MessageTimeoutHit)
-
-	r.MessageProxySuccess = &gangliamr.Meter{
-		Name:   "message_proxy_success",
-		Title:  "Message Proxied Successfully",
-		Units:  "message/sec",
-		Groups: gangliaGroup,
-	}
-	registry.Register(r.MessageProxySuccess)
-
-	r.MessageProxyFailure = &gangliamr.Meter{
-		Name:   "message_proxy_failure",
-		Title:  "Message Proxy Failure",
-		Units:  "message/sec",
-		Groups: gangliaGroup,
-	}
-	registry.Register(r.MessageProxyFailure)
-
-	r.ServerConnHeld = &gangliamr.Timer{
-		Name:   "server_conn_held",
-		Title:  "Duration a Server Conn was held",
-		Groups: gangliaGroup,
-	}
-	registry.Register(r.ServerConnHeld)
-
-	r.MessageWithResponse = &gangliamr.Meter{
-		Name:   "message_with_response",
-		Title:  "Message With Response",
-		Units:  "message/sec",
-		Groups: gangliaGroup,
-	}
-	registry.Register(r.MessageWithResponse)
-
-	r.MessageWithMutation = &gangliamr.Meter{
-		Name:   "message_with_mutation",
-		Title:  "Message With Mutation",
-		Units:  "message/sec",
-		Groups: gangliaGroup,
-	}
-	registry.Register(r.MessageWithMutation)
-
-	r.GetLastErrorTimeoutHit = &gangliamr.Meter{
-		Name:   "get_last_error_timeout_hit",
-		Title:  "getLastError Timeout Hit",
-		Units:  "timeout/sec",
-		Groups: gangliaGroup,
-	}
-	registry.Register(r.GetLastErrorTimeoutHit)
 }
 
 // Start starts proxies to support this ReplicaSet.
 func (r *ReplicaSet) Start() error {
 	r.proxyToReal = make(map[string]string)
 	r.realToProxy = make(map[string]string)
+	r.ignoredReal = make(map[string]ReplicaState)
 	r.proxies = make(map[string]*Proxy)
 
 	if r.Addrs == "" {
@@ -270,9 +130,22 @@ func (r *ReplicaSet) Start() error {
 	if err != nil {
 		return err
 	}
+
+	healthyAddrs := r.lastState.Addrs()
+
+	// Ensure we have at least one health address.
+	if len(healthyAddrs) == 0 {
+		return stackerr.Newf("no healthy primaries or secondaries: %s", r.Addrs)
+	}
+
+	// Add discovered nodes to seed address list. Over time if the original seed
+	// nodes have gone away and new nodes have joined this ensures that we'll
+	// still be able to connect.
+	r.Addrs = strings.Join(uniq(append(rawAddrs, healthyAddrs...)), ",")
+
 	r.restarter = new(sync.Once)
 
-	for _, addr := range r.lastState.Addrs() {
+	for _, addr := range healthyAddrs {
 		listener, err := r.newListener()
 		if err != nil {
 			return err
@@ -287,6 +160,15 @@ func (r *ReplicaSet) Start() error {
 		}
 		if err := r.add(p); err != nil {
 			return err
+		}
+	}
+
+	// add the ignored hosts, unless lastRS is nil (single node mode)
+	if r.lastState.lastRS != nil {
+		for _, member := range r.lastState.lastRS.Members {
+			if _, ok := r.realToProxy[member.Name]; !ok {
+				r.ignoredReal[member.Name] = member.State
+			}
 		}
 	}
 
@@ -343,7 +225,7 @@ func (r *ReplicaSet) stop(hard bool) error {
 func (r *ReplicaSet) Restart() {
 	r.restarter.Do(func() {
 		r.Log.Info("restart triggered")
-		if err := r.stop(true); err != nil {
+		if err := r.stop(*hardRestart); err != nil {
 			// We log and ignore this hoping for a successful start anyways.
 			r.Log.Errorf("stop failed for restart: %s", err)
 		} else {
@@ -395,7 +277,8 @@ func (r *ReplicaSet) proxyHostname() string {
 	for _, ia := range interfaceAddrs {
 		sa := ia.String()
 		for _, ha := range hostnameAddrs {
-			if sa == ha {
+			// check for an exact match or a match ignoring the suffix bits
+			if sa == ha || strings.HasPrefix(sa, ha+"/") {
 				return hostname
 			}
 		}
@@ -438,6 +321,12 @@ func (r *ReplicaSet) add(p *Proxy) error {
 func (r *ReplicaSet) Proxy(h string) (string, error) {
 	p, ok := r.realToProxy[h]
 	if !ok {
+		if s, ok := r.ignoredReal[h]; ok {
+			return "", &ProxyMapperError{
+				RealHost: h,
+				State:    s,
+			}
+		}
 		return "", fmt.Errorf("mongo %s is not in ReplicaSet", h)
 	}
 	return p, nil
@@ -461,4 +350,29 @@ func (r *ReplicaSet) SameRS(o *replSetGetStatusResponse) bool {
 // SameIM checks if the given isMasterResponse is the same as the last state.
 func (r *ReplicaSet) SameIM(o *isMasterResponse) bool {
 	return r.lastState.SameIM(o)
+}
+
+// ProxyMapperError occurs when a known host is being ignored and does not have
+// a corresponding proxy address.
+type ProxyMapperError struct {
+	RealHost string
+	State    ReplicaState
+}
+
+func (p *ProxyMapperError) Error() string {
+	return fmt.Sprintf("error mapping host %s in state %s", p.RealHost, p.State)
+}
+
+// uniq takes a slice of strings and returns a new slice with duplicates
+// removed.
+func uniq(set []string) []string {
+	m := make(map[string]struct{}, len(set))
+	for _, s := range set {
+		m[s] = struct{}{}
+	}
+	news := make([]string, 0, len(m))
+	for s := range m {
+		news = append(news, s)
+	}
+	return news
 }

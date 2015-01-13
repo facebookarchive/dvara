@@ -14,7 +14,7 @@ import (
 	"github.com/facebookgo/inject"
 	"github.com/facebookgo/startstop"
 
-	"labix.org/v2/mgo/bson"
+	"gopkg.in/mgo.v2/bson"
 )
 
 var errInvalidBSON = errors.New("invalid BSON")
@@ -351,33 +351,6 @@ func TestReplSetGetStatusResponseRewriterFailures(t *testing.T) {
 			ReplicaStateCompare: fakeReplicaStateCompare{sameIM: true, sameRS: true},
 		},
 		{
-			Name: "unknown member syncingTo",
-			Server: fakeSingleDocReply(
-				map[string]interface{}{
-					"members": []map[string]interface{}{
-						map[string]interface{}{
-							"name":      "bar",
-							"syncingTo": "foo",
-						},
-					},
-				},
-			),
-			Error:               errProxyNotFound.Error(),
-			ProxyMapper:         fakeProxyMapper{m: map[string]string{"bar": "baz"}},
-			ReplicaStateCompare: fakeReplicaStateCompare{sameIM: true, sameRS: true},
-		},
-		{
-			Name: "unknown top level syncingTo",
-			Server: fakeSingleDocReply(
-				map[string]interface{}{
-					"syncingTo": "foo",
-				},
-			),
-			Error:               errProxyNotFound.Error(),
-			ProxyMapper:         fakeProxyMapper{m: map[string]string{"bar": "baz"}},
-			ReplicaStateCompare: fakeReplicaStateCompare{sameIM: true, sameRS: true},
-		},
-		{
 			Name:                "diffferent rs",
 			Server:              fakeSingleDocReply(map[string]interface{}{}),
 			Error:               errRSChanged.Error(),
@@ -414,12 +387,10 @@ func TestReplSetGetStatusResponseRewriterSuccess(t *testing.T) {
 		},
 	}
 	in := bson.M{
-		"syncingTo": "a",
 		"members": []interface{}{
 			bson.M{
-				"name":      "a",
-				"syncingTo": "b",
-				"stateStr":  "PRIMARY",
+				"name":     "a",
+				"stateStr": "PRIMARY",
 			},
 			bson.M{
 				"name": "b",
@@ -431,12 +402,10 @@ func TestReplSetGetStatusResponseRewriterSuccess(t *testing.T) {
 		},
 	}
 	out := bson.M{
-		"syncingTo": "1",
 		"members": []interface{}{
 			bson.M{
-				"name":      "1",
-				"syncingTo": "2",
-				"stateStr":  "PRIMARY",
+				"name":     "1",
+				"stateStr": "PRIMARY",
 			},
 			bson.M{
 				"name": "2",

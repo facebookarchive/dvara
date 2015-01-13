@@ -247,18 +247,6 @@ func TestNotSameIMMembers(t *testing.T) {
 	}
 }
 
-func TestIsMasterQueryFailure(t *testing.T) {
-	t.Parallel()
-	h := NewSingleHarness(t)
-	session := h.ProxySession()
-	defer session.Close()
-	h.Stop()
-	_, err := isMaster(session)
-	if err == nil {
-		t.Fatal("did not get an error as expected")
-	}
-}
-
 func TestSingleNodeNewReplicaSetState(t *testing.T) {
 	t.Parallel()
 	mgo := mgotest.NewStartedServer(t)

@@ -11,7 +11,7 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 
-	"labix.org/v2/mgo/bson"
+	"gopkg.in/mgo.v2/bson"
 )
 
 var (
@@ -101,14 +101,14 @@ func (p *ProxyQuery) Proxy(
 			)
 		}
 
-		if bytes.Equal(adminCollectionName, fullCollectionName) {
-			if hasKey(q, "isMaster") {
-				rewriter = p.IsMasterResponseRewriter
-			}
-			if hasKey(q, "replSetGetStatus") {
-				rewriter = p.ReplSetGetStatusResponseRewriter
-			}
+		if hasKey(q, "isMaster") {
+			rewriter = p.IsMasterResponseRewriter
+		}
+		if bytes.Equal(adminCollectionName, fullCollectionName) && hasKey(q, "replSetGetStatus") {
+			rewriter = p.ReplSetGetStatusResponseRewriter
+		}
 
+		if rewriter != nil {
 			// If forShell is specified, we don't want to reset the last error. See
 			// comment above around resetLastError for details.
 			resetLastError = hasKey(q, "forShell")
@@ -116,7 +116,7 @@ func (p *ProxyQuery) Proxy(
 	}
 
 	if resetLastError && lastError.Exists() {
-		p.Log.Info("reset getLastError cache")
+		p.Log.Debug("reset getLastError cache")
 		lastError.Reset()
 	}
 
@@ -212,7 +212,7 @@ func (r *GetLastErrorRewriter) Rewrite(
 			r.Log.Error(err)
 			return err
 		}
-		r.Log.Infof("caching new getLastError response: %s", lastError.rest.Bytes())
+		r.Log.Debugf("caching new getLastError response: %s", lastError.rest.Bytes())
 	} else {
 		// We need to discard the pending bytes from the client from the query
 		// before we send it our cached response.
@@ -227,7 +227,7 @@ func (r *GetLastErrorRewriter) Rewrite(
 		}
 		// Modify and send the cached response for this request.
 		lastError.header.ResponseTo = h.RequestID
-		r.Log.Infof("using cached getLastError response: %s", lastError.rest.Bytes())
+		r.Log.Debugf("using cached getLastError response: %s", lastError.rest.Bytes())
 	}
 
 	if err := lastError.header.WriteTo(client); err != nil {
@@ -330,9 +330,9 @@ func (r *ReplyRW) WriteOne(client io.Writer, h *messageHeader, prefix replyPrefi
 }
 
 type isMasterResponse struct {
-	Hosts   []string `bson:"hosts"`
-	Primary string   `bson:"primary"`
-	Me      string   `bson:"me"`
+	Hosts   []string `bson:"hosts,omitempty"`
+	Primary string   `bson:"primary,omitempty"`
+	Me      string   `bson:"me,omitempty"`
 	Extra   bson.M   `bson:",inline"`
 }
 
@@ -355,17 +355,32 @@ func (r *IsMasterResponseRewriter) Rewrite(client io.Writer, server io.Reader) e
 	if !r.ReplicaStateCompare.SameIM(&q) {
 		return errRSChanged
 	}
-	for i, h := range q.Hosts {
-		if q.Hosts[i], err = r.ProxyMapper.Proxy(h); err != nil {
+
+	var newHosts []string
+	for _, h := range q.Hosts {
+		newH, err := r.ProxyMapper.Proxy(h)
+		if err != nil {
+			if pme, ok := err.(*ProxyMapperError); ok {
+				if pme.State != ReplicaStateArbiter {
+					r.Log.Errorf("dropping member %s in state %s", h, pme.State)
+				}
+				continue
+			}
+			// unknown err
 			return err
 		}
+		newHosts = append(newHosts, newH)
 	}
+	q.Hosts = newHosts
+
 	if q.Primary != "" {
+		// failure in mapping the primary is fatal
 		if q.Primary, err = r.ProxyMapper.Proxy(q.Primary); err != nil {
 			return err
 		}
 	}
 	if q.Me != "" {
+		// failure in mapping me is fatal
 		if q.Me, err = r.ProxyMapper.Proxy(q.Me); err != nil {
 			return err
 		}
@@ -374,16 +389,15 @@ func (r *IsMasterResponseRewriter) Rewrite(client io.Writer, server io.Reader) e
 }
 
 type statusMember struct {
-	Name      string `bson:"name"`
-	State     string `bson:"stateStr,omitempty"`
-	SyncingTo string `bson:"syncingTo,omitempty"`
-	Extra     bson.M `bson:",inline"`
+	Name  string       `bson:"name"`
+	State ReplicaState `bson:"stateStr,omitempty"`
+	Self  bool         `bson:"self,omitempty"`
+	Extra bson.M       `bson:",inline"`
 }
 
 type replSetGetStatusResponse struct {
-	SyncingTo string                 `bson:"syncingTo,omitempty"`
-	Members   []statusMember         `bson:"members"`
-	Extra     map[string]interface{} `bson:",inline"`
+	Members []statusMember         `bson:"members"`
+	Extra   map[string]interface{} `bson:",inline"`
 }
 
 // ReplSetGetStatusResponseRewriter rewrites the "replSetGetStatus" response.
@@ -405,22 +419,24 @@ func (r *ReplSetGetStatusResponseRewriter) Rewrite(client io.Writer, server io.R
 	if !r.ReplicaStateCompare.SameRS(&q) {
 		return errRSChanged
 	}
-	for i, m := range q.Members {
-		if m.Name, err = r.ProxyMapper.Proxy(m.Name); err != nil {
-			return err
-		}
-		if m.SyncingTo != "" {
-			if m.SyncingTo, err = r.ProxyMapper.Proxy(m.SyncingTo); err != nil {
-				return err
+
+	var newMembers []statusMember
+	for _, m := range q.Members {
+		newH, err := r.ProxyMapper.Proxy(m.Name)
+		if err != nil {
+			if pme, ok := err.(*ProxyMapperError); ok {
+				if pme.State != ReplicaStateArbiter {
+					r.Log.Errorf("dropping member %s in state %s", h, pme.State)
+				}
+				continue
 			}
-		}
-		q.Members[i] = m
-	}
-	if q.SyncingTo != "" {
-		if q.SyncingTo, err = r.ProxyMapper.Proxy(q.SyncingTo); err != nil {
+			// unknown err
 			return err
 		}
+		m.Name = newH
+		newMembers = append(newMembers, m)
 	}
+	q.Members = newMembers
 	return r.ReplyRW.WriteOne(client, h, prefix, docLen, q)
 }
 

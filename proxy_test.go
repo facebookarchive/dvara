@@ -9,9 +9,10 @@ import (
 	"github.com/facebookgo/inject"
 	"github.com/facebookgo/mgotest"
 	"github.com/facebookgo/startstop"
+	"github.com/facebookgo/stats"
 
-	"labix.org/v2/mgo"
-	"labix.org/v2/mgo/bson"
+	"gopkg.in/mgo.v2"
+	"gopkg.in/mgo.v2/bson"
 )
 
 func TestParallelInsertWithUniqueIndex(t *testing.T) {
@@ -21,10 +22,6 @@ func TestParallelInsertWithUniqueIndex(t *testing.T) {
 	}
 	h := NewSingleHarness(t)
 	defer h.Stop()
-
-	for _, p := range h.ReplicaSet.proxies {
-		p.Log = nopLogger{}
-	}
 
 	limit := 20000
 	c := make(chan int, limit)
@@ -123,9 +120,7 @@ func TestEnsureIndex(t *testing.T) {
 		Sparse:     true,
 	}
 	err := collection.EnsureIndex(index)
-	if err != nil {
-		t.Fatal("ensure index call failed")
-	}
+	ensure.Nil(t, err)
 	err = collection.Insert(
 		map[string]string{
 			"firstname": "harvey",
@@ -145,9 +140,7 @@ func TestEnsureIndex(t *testing.T) {
 			"lastname":  "dent",
 		},
 	)
-	if err == nil {
-		t.Fatal("ensure index failed")
-	}
+	ensure.NotNil(t, err)
 }
 
 // inserting same data after dropping an index should work
@@ -294,6 +287,7 @@ func TestNoAddrsGiven(t *testing.T) {
 	err := graph.Provide(
 		&inject.Object{Value: &log},
 		&inject.Object{Value: &replicaSet},
+		&inject.Object{Value: &stats.HookClient{}},
 	)
 	ensure.Nil(t, err)
 	ensure.Nil(t, graph.Populate())
@@ -317,6 +311,7 @@ func TestSingleNodeWhenExpectingRS(t *testing.T) {
 	err := graph.Provide(
 		&inject.Object{Value: &log},
 		&inject.Object{Value: &replicaSet},
+		&inject.Object{Value: &stats.HookClient{}},
 	)
 	ensure.Nil(t, err)
 	ensure.Nil(t, graph.Populate())

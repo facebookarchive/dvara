@@ -7,8 +7,8 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 
-	"labix.org/v2/mgo"
-	"labix.org/v2/mgo/bson"
+	"gopkg.in/mgo.v2"
+	"gopkg.in/mgo.v2/bson"
 )
 
 const errNotReplSet = "not running with --replSet"
@@ -56,6 +56,15 @@ func NewReplicaSetState(addr string) (*ReplicaSetState, error) {
 		}
 	}
 
+	// nodes starting up are invalid
+	if r.lastRS != nil {
+		for _, member := range r.lastRS.Members {
+			if member.Self && member.State == "STARTUP" {
+				return nil, fmt.Errorf("node is busy starting up: %s", member.Name)
+			}
+		}
+	}
+
 	return &r, nil
 }
 
@@ -88,14 +97,16 @@ func (r *ReplicaSetState) SameIM(o *isMasterResponse) bool {
 	return sameIMMembers(r.lastIM, o)
 }
 
-// Addrs returns the addresses of all members.
+// Addrs returns the addresses of members in primary or secondary state.
 func (r *ReplicaSetState) Addrs() []string {
 	if r.singleAddr != "" {
 		return []string{r.singleAddr}
 	}
-	members := make([]string, 0, len(r.lastRS.Members))
+	var members []string
 	for _, m := range r.lastRS.Members {
-		members = append(members, m.Name)
+		if m.State == ReplicaStatePrimary || m.State == ReplicaStateSecondary {
+			members = append(members, m.Name)
+		}
 	}
 	return members
 }
@@ -226,7 +237,7 @@ func sameIMMembers(a *isMasterResponse, b *isMasterResponse) bool {
 	sort.Strings(bHosts)
 	aHosts = append(aHosts, a.Primary)
 	bHosts = append(bHosts, b.Primary)
-	for i := 0; i < l; i++ {
+	for i := range aHosts {
 		if aHosts[i] != bHosts[i] {
 			return false
 		}

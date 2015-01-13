@@ -6,8 +6,8 @@ import (
 
 	"github.com/facebookgo/subset"
 
-	"labix.org/v2/mgo"
-	"labix.org/v2/mgo/bson"
+	"gopkg.in/mgo.v2"
+	"gopkg.in/mgo.v2/bson"
 )
 
 func TestReplicaSetMembers(t *testing.T) {
