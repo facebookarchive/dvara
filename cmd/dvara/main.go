@@ -12,6 +12,7 @@ import (
 	"github.com/facebookgo/gangliamr"
 	"github.com/facebookgo/inject"
 	"github.com/facebookgo/startstop"
+	"github.com/facebookgo/stats"
 )
 
 func main() {
@@ -42,11 +43,13 @@ func Main() error {
 		MaxConnections:      *maxConnections,
 	}
 
+	var statsClient stats.HookClient
 	var log stdLogger
 	var graph inject.Graph
 	err := graph.Provide(
 		&inject.Object{Value: &log},
 		&inject.Object{Value: &replicaSet},
+		&inject.Object{Value: &statsClient},
 	)
 	if err != nil {
 		return err
