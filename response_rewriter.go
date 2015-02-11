@@ -332,15 +332,16 @@ func (r *ReplyRW) WriteOne(client io.Writer, h *messageHeader, prefix replyPrefi
 		return err
 	}
 
+    buf := bufio.NewWriter(client)
 	h.MessageLength = h.MessageLength - oldDocLen + int32(len(newDoc))
 	parts := [][]byte{h.ToWire(), prefix[:], newDoc}
 	for _, p := range parts {
-		if _, err := client.Write(p); err != nil {
+		if _, err := buf.Write(p); err != nil {
 			return err
 		}
 	}
 
-	return nil
+    return buf.Flush()
 }
 
 type isMasterResponse struct {
