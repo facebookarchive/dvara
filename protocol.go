@@ -3,6 +3,7 @@ package dvara
 import (
 	"errors"
 	"fmt"
+	"bufio"
 	"io"
 )
 
@@ -129,6 +130,7 @@ func readHeader(r io.Reader) (*messageHeader, error) {
 	if _, err := io.ReadFull(r, b); err != nil {
 		return nil, err
 	}
+
 	h := messageHeader{}
 	h.FromWire(b)
 	return &h, nil
@@ -136,14 +138,16 @@ func readHeader(r io.Reader) (*messageHeader, error) {
 
 // copyMessage copies reads & writes an entire message.
 func copyMessage(w io.Writer, r io.Reader) error {
+	buf := bufio.NewWriter(w)
 	h, err := readHeader(r)
 	if err != nil {
 		return err
 	}
-	if err := h.WriteTo(w); err != nil {
+	if err := h.WriteTo(buf); err != nil {
 		return err
 	}
-	_, err = io.CopyN(w, r, int64(h.MessageLength-headerLen))
+	_, err = io.CopyN(buf, r, int64(h.MessageLength-headerLen))
+	buf.Flush()
 	return err
 }
 

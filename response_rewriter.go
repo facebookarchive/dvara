@@ -12,7 +12,7 @@ import (
 	"github.com/davecgh/go-spew/spew"
 
 	"gopkg.in/mgo.v2/bson"
-)
+    "bufio")
 
 var (
 	proxyAllQueries = flag.Bool(
@@ -168,6 +168,25 @@ func (l *LastError) Reset() {
 	l.rest.Reset()
 }
 
+func (l *LastError) Write(to io.Writer) (n int, err error) {
+    buf := bufio.NewWriter(to)
+    var hBytesWrote int
+    var rBytesWrote int
+
+    hBytesWrote, err = buf.Write(l.header.ToWire())
+    if err != nil {
+        return hBytesWrote, err
+    }
+
+    rBytesWrote, err = buf.Write(l.rest.Bytes())
+    totalWrote := hBytesWrote + rBytesWrote
+    if err != nil {
+        return totalWrote, err
+    }
+
+    return totalWrote, buf.Flush()
+}
+
 // GetLastErrorRewriter handles getLastError requests and proxies, caches or
 // sends cached responses as necessary.
 type GetLastErrorRewriter struct {
@@ -230,14 +249,9 @@ func (r *GetLastErrorRewriter) Rewrite(
 		r.Log.Debugf("using cached getLastError response: %s", lastError.rest.Bytes())
 	}
 
-	if err := lastError.header.WriteTo(client); err != nil {
-		r.Log.Error(err)
-		return err
-	}
-	if _, err := client.Write(lastError.rest.Bytes()); err != nil {
-		r.Log.Error(err)
-		return err
-	}
+	if _, err := lastError.Write(client); err != nil{
+        return err
+    }
 
 	return nil
 }
