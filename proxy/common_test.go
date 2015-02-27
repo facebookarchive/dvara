@@ -1,4 +1,4 @@
-package dvara
+package proxy
 
 import (
 	"os"

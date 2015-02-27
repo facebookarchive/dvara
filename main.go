@@ -8,11 +8,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mcuadros/exmongodb/proxy"
+
 	"github.com/facebookgo/gangliamr"
 	"github.com/facebookgo/inject"
 	"github.com/facebookgo/startstop"
 	"github.com/facebookgo/stats"
-	"github.com/mcuadros/dvara/proxy"
 )
 
 func main() {
@@ -33,7 +34,7 @@ func Main() error {
 
 	flag.Parse()
 
-	replicaSet := dvara.ReplicaSet{
+	replicaSet := proxy.ReplicaSet{
 		Addrs:                   *addrs,
 		PortStart:               *portStart,
 		PortEnd:                 *portEnd,

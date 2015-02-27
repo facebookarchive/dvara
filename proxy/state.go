@@ -1,4 +1,4 @@
-package dvara
+package proxy
 
 // ReplicaState is the state of a node in the replica.
 type ReplicaState string
