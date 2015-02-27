@@ -1,10 +1,12 @@
-package proxy
+package protocol
 
 import (
 	"errors"
 	"fmt"
 	"io"
 )
+
+const HeaderLen = 16
 
 var (
 	errWrite = errors.New("incorrect number of bytes written")
@@ -68,8 +70,8 @@ const (
 	OpKillCursors = OpCode(2007)
 )
 
-// messageHeader is the mongo MessageHeader
-type messageHeader struct {
+// MessageHeader is the mongo MessageHeader
+type MessageHeader struct {
 	// MessageLength is the total message size, including this header
 	MessageLength int32
 	// RequestID is the identifier for this miessage
@@ -80,27 +82,26 @@ type messageHeader struct {
 	OpCode OpCode
 }
 
-// ToWire converts the messageHeader to the wire protocol
-func (m messageHeader) ToWire() []byte {
-	fmt.Println("ToWire", m.OpCode)
-	var d [headerLen]byte
+// ToWire converts the MessageHeader to the wire protocol
+func (m MessageHeader) ToWire() []byte {
+	var d [HeaderLen]byte
 	b := d[:]
-	setInt32(b, 0, m.MessageLength)
-	setInt32(b, 4, m.RequestID)
-	setInt32(b, 8, m.ResponseTo)
-	setInt32(b, 12, int32(m.OpCode))
+	SetInt32(b, 0, m.MessageLength)
+	SetInt32(b, 4, m.RequestID)
+	SetInt32(b, 8, m.ResponseTo)
+	SetInt32(b, 12, int32(m.OpCode))
 	return b
 }
 
 // FromWire reads the wirebytes into this object
-func (m *messageHeader) FromWire(b []byte) {
-	m.MessageLength = getInt32(b, 0)
-	m.RequestID = getInt32(b, 4)
-	m.ResponseTo = getInt32(b, 8)
-	m.OpCode = OpCode(getInt32(b, 12))
+func (m *MessageHeader) FromWire(b []byte) {
+	m.MessageLength = GetInt32(b, 0)
+	m.RequestID = GetInt32(b, 4)
+	m.ResponseTo = GetInt32(b, 8)
+	m.OpCode = OpCode(GetInt32(b, 12))
 }
 
-func (m *messageHeader) WriteTo(w io.Writer) error {
+func (m *MessageHeader) WriteTo(w io.Writer) error {
 	b := m.ToWire()
 	n, err := w.Write(b)
 	if err != nil {
@@ -113,7 +114,7 @@ func (m *messageHeader) WriteTo(w io.Writer) error {
 }
 
 // String returns a string representation of the message header. Useful for debugging.
-func (m *messageHeader) String() string {
+func (m *MessageHeader) String() string {
 	return fmt.Sprintf(
 		"opCode:%s (%d) msgLen:%d reqID:%d respID:%d",
 		m.OpCode,
@@ -124,40 +125,40 @@ func (m *messageHeader) String() string {
 	)
 }
 
-func readHeader(r io.Reader) (*messageHeader, error) {
-	var d [headerLen]byte
+func ReadHeader(r io.Reader) (*MessageHeader, error) {
+	var d [HeaderLen]byte
 	b := d[:]
 	if _, err := io.ReadFull(r, b); err != nil {
 		return nil, err
 	}
-	h := messageHeader{}
+	h := MessageHeader{}
 	h.FromWire(b)
 	return &h, nil
 }
 
 // copyMessage copies reads & writes an entire message.
-func copyMessage(w io.Writer, r io.Reader) error {
-	h, err := readHeader(r)
+func CopyMessage(w io.Writer, r io.Reader) error {
+	h, err := ReadHeader(r)
 	if err != nil {
 		return err
 	}
 	if err := h.WriteTo(w); err != nil {
 		return err
 	}
-	_, err = io.CopyN(w, r, int64(h.MessageLength-headerLen))
+	_, err = io.CopyN(w, r, int64(h.MessageLength-HeaderLen))
 	return err
 }
 
 // readDocument read an entire BSON document. This document can be used with
 // bson.Unmarshal.
-func readDocument(r io.Reader) ([]byte, error) {
+func ReadDocument(r io.Reader) ([]byte, error) {
 	var sizeRaw [4]byte
 	if _, err := io.ReadFull(r, sizeRaw[:]); err != nil {
 		return nil, err
 	}
-	size := getInt32(sizeRaw[:], 0)
+	size := GetInt32(sizeRaw[:], 0)
 	doc := make([]byte, size)
-	setInt32(doc, 0, size)
+	SetInt32(doc, 0, size)
 	if _, err := io.ReadFull(r, doc[4:]); err != nil {
 		return nil, err
 	}
@@ -166,9 +167,9 @@ func readDocument(r io.Reader) ([]byte, error) {
 
 const x00 = byte(0)
 
-// readCString reads a null turminated string as defined by BSON from the
+// ReadCString reads a null turminated string as defined by BSON from the
 // reader. Note, the return value includes the trailing null byte.
-func readCString(r io.Reader) ([]byte, error) {
+func ReadCString(r io.Reader) ([]byte, error) {
 	var b []byte
 	var n [1]byte
 	for {
@@ -184,14 +185,14 @@ func readCString(r io.Reader) ([]byte, error) {
 
 // all data in the MongoDB wire protocol is little-endian.
 // all the read/write functions below are little-endian.
-func getInt32(b []byte, pos int) int32 {
+func GetInt32(b []byte, pos int) int32 {
 	return (int32(b[pos+0])) |
 		(int32(b[pos+1]) << 8) |
 		(int32(b[pos+2]) << 16) |
 		(int32(b[pos+3]) << 24)
 }
 
-func setInt32(b []byte, pos int, i int32) {
+func SetInt32(b []byte, pos int, i int32) {
 	b[pos] = byte(i)
 	b[pos+1] = byte(i >> 8)
 	b[pos+2] = byte(i >> 16)

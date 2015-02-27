@@ -1,4 +1,4 @@
-package proxy
+package protocol
 
 import (
 	"bytes"
@@ -45,7 +45,7 @@ func TestOpStrings(t *testing.T) {
 
 func TestMsgHeaderString(t *testing.T) {
 	t.Parallel()
-	m := &messageHeader{
+	m := &MessageHeader{
 		OpCode:        OpQuery,
 		MessageLength: 10,
 		RequestID:     42,
@@ -58,11 +58,11 @@ func TestMsgHeaderString(t *testing.T) {
 
 func TestCopyEmptyMessage(t *testing.T) {
 	t.Parallel()
-	msg := messageHeader{}
+	msg := MessageHeader{}
 	msgBytes := msg.ToWire()
 	r := bytes.NewReader(msgBytes)
 	var w bytes.Buffer
-	if err := copyMessage(&w, r); err != nil {
+	if err := CopyMessage(&w, r); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(msgBytes, w.Bytes()) {
@@ -79,14 +79,14 @@ func TestCopyMessageFromReadError(t *testing.T) {
 		},
 	}
 	var w bytes.Buffer
-	if err := copyMessage(&w, r); err != expectedErr {
+	if err := CopyMessage(&w, r); err != expectedErr {
 		t.Fatalf("did not get expected error, instead got: %s", err)
 	}
 }
 
 func TestCopyMessageFromWriteError(t *testing.T) {
 	t.Parallel()
-	msg := messageHeader{}
+	msg := MessageHeader{}
 	r := bytes.NewReader(msg.ToWire())
 	expectedErr := errors.New("foo")
 	w := testWriter{
@@ -94,28 +94,28 @@ func TestCopyMessageFromWriteError(t *testing.T) {
 			return 0, expectedErr
 		},
 	}
-	if err := copyMessage(w, r); err != expectedErr {
+	if err := CopyMessage(w, r); err != expectedErr {
 		t.Fatalf("did not get expected error, instead got: %s", err)
 	}
 }
 
 func TestCopyMessageFromWriteLengthError(t *testing.T) {
 	t.Parallel()
-	msg := messageHeader{}
+	msg := MessageHeader{}
 	r := bytes.NewReader(msg.ToWire())
 	w := testWriter{
 		write: func(b []byte) (int, error) {
 			return 0, nil
 		},
 	}
-	if err := copyMessage(w, r); err != errWrite {
+	if err := CopyMessage(w, r); err != errWrite {
 		t.Fatalf("did not get expected error, instead got: %s", err)
 	}
 }
 
 func TestReadDocumentEmpty(t *testing.T) {
 	t.Parallel()
-	doc, err := readDocument(bytes.NewReader([]byte{}))
+	doc, err := ReadDocument(bytes.NewReader([]byte{}))
 	if err != io.EOF {
 		t.Fatal("did not find expected error")
 	}
@@ -131,13 +131,13 @@ func TestReadDocumentPartial(t *testing.T) {
 		read: func(b []byte) (int, error) {
 			if first {
 				first = false
-				setInt32(b, 0, 5)
+				SetInt32(b, 0, 5)
 				return 4, nil
 			}
 			return 0, io.EOF
 		},
 	}
-	doc, err := readDocument(r)
+	doc, err := ReadDocument(r)
 	if err != io.EOF {
 		t.Fatalf("did not find expected error, instead got %s %v", err, doc)
 	}
@@ -160,7 +160,7 @@ func TestReadCString(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		cstring, err := readCString(bytes.NewReader(c.Data))
+		cstring, err := ReadCString(bytes.NewReader(c.Data))
 		if err != c.Error {
 			t.Fatalf("did not find expected error, instead got %s %v", err, cstring)
 		}

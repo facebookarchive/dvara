@@ -9,6 +9,8 @@ import (
 	"io/ioutil"
 	"strings"
 
+	"github.com/mcuadros/exmongodb/protocol"
+
 	"github.com/davecgh/go-spew/spew"
 
 	"gopkg.in/mgo.v2/bson"
@@ -25,7 +27,13 @@ var (
 	cmdCollectionSuffix = []byte(".$cmd\000")
 )
 
-// ProxyQuery proxies an OpQuery and a corresponding response.
+type testWriter struct {
+	write func([]byte) (int, error)
+}
+
+func (t testWriter) Write(b []byte) (int, error) { return t.write(b) }
+
+// ProxyQuery proxies an protocol.OpQuery and a corresponding response.
 type ProxyQuery struct {
 	Log                              Logger                            `inject:""`
 	GetLastErrorRewriter             *GetLastErrorRewriter             `inject:""`
@@ -33,9 +41,9 @@ type ProxyQuery struct {
 	ReplSetGetStatusResponseRewriter *ReplSetGetStatusResponseRewriter `inject:""`
 }
 
-// Proxy proxies an OpQuery and a corresponding response.
+// Proxy proxies an protocol.OpQuery and a corresponding response.
 func (p *ProxyQuery) Proxy(
-	h *messageHeader,
+	h *protocol.MessageHeader,
 	client io.ReadWriter,
 	server io.ReadWriter,
 	lastError *LastError,
@@ -56,7 +64,7 @@ func (p *ProxyQuery) Proxy(
 	}
 	parts = append(parts, flags[:])
 
-	fullCollectionName, err := readCString(client)
+	fullCollectionName, err := protocol.ReadCString(client)
 	if err != nil {
 		p.Log.Error(err)
 		return err
@@ -72,7 +80,7 @@ func (p *ProxyQuery) Proxy(
 		}
 		parts = append(parts, twoInt32[:])
 
-		queryDoc, err := readDocument(client)
+		queryDoc, err := protocol.ReadDocument(client)
 		if err != nil {
 			p.Log.Error(err)
 			return err
@@ -86,7 +94,7 @@ func (p *ProxyQuery) Proxy(
 		}
 
 		p.Log.Debugf(
-			"buffered OpQuery for %s: %s",
+			"buffered protocol.OpQuery for %s: %s",
 			fullCollectionName[:len(fullCollectionName)-1],
 			spew.Sdump(q),
 		)
@@ -143,7 +151,7 @@ func (p *ProxyQuery) Proxy(
 		return nil
 	}
 
-	if err := copyMessage(client, server); err != nil {
+	if err := protocol.CopyMessage(client, server); err != nil {
 		p.Log.Error(err)
 		return err
 	}
@@ -153,7 +161,7 @@ func (p *ProxyQuery) Proxy(
 
 // LastError holds the last known error.
 type LastError struct {
-	header *messageHeader
+	header *protocol.MessageHeader
 	rest   bytes.Buffer
 }
 
@@ -176,7 +184,7 @@ type GetLastErrorRewriter struct {
 
 // Rewrite handles getLastError requests.
 func (r *GetLastErrorRewriter) Rewrite(
-	h *messageHeader,
+	h *protocol.MessageHeader,
 	parts [][]byte,
 	client io.ReadWriter,
 	server io.ReadWriter,
@@ -203,11 +211,11 @@ func (r *GetLastErrorRewriter) Rewrite(
 		}
 
 		var err error
-		if lastError.header, err = readHeader(server); err != nil {
+		if lastError.header, err = protocol.ReadHeader(server); err != nil {
 			r.Log.Error(err)
 			return err
 		}
-		pending = int64(lastError.header.MessageLength - headerLen)
+		pending = int64(lastError.header.MessageLength - protocol.HeaderLen)
 		if _, err = io.CopyN(&lastError.rest, server, pending); err != nil {
 			r.Log.Error(err)
 			return err
@@ -273,15 +281,15 @@ type ReplyRW struct {
 
 // ReadOne reads a 1 document response, from the server, unmarshals it into v
 // and returns the various parts.
-func (r *ReplyRW) ReadOne(server io.Reader, v interface{}) (*messageHeader, replyPrefix, int32, error) {
-	h, err := readHeader(server)
+func (r *ReplyRW) ReadOne(server io.Reader, v interface{}) (*protocol.MessageHeader, replyPrefix, int32, error) {
+	h, err := protocol.ReadHeader(server)
 	if err != nil {
 		r.Log.Error(err)
 		return nil, emptyPrefix, 0, err
 	}
 
-	if h.OpCode != OpReply {
-		err := fmt.Errorf("readOneReplyDoc: expected op %s, got %s", OpReply, h.OpCode)
+	if h.OpCode != protocol.OpReply {
+		err := fmt.Errorf("readOneReplyDoc: expected op %s, got %s", protocol.OpReply, h.OpCode)
 		return nil, emptyPrefix, 0, err
 	}
 
@@ -291,13 +299,13 @@ func (r *ReplyRW) ReadOne(server io.Reader, v interface{}) (*messageHeader, repl
 		return nil, emptyPrefix, 0, err
 	}
 
-	numDocs := getInt32(prefix[:], 16)
+	numDocs := protocol.GetInt32(prefix[:], 16)
 	if numDocs != 1 {
 		err := fmt.Errorf("readOneReplyDoc: can only handle 1 result document, got: %d", numDocs)
 		return nil, emptyPrefix, 0, err
 	}
 
-	rawDoc, err := readDocument(server)
+	rawDoc, err := protocol.ReadDocument(server)
 	if err != nil {
 		r.Log.Error(err)
 		return nil, emptyPrefix, 0, err
@@ -312,7 +320,7 @@ func (r *ReplyRW) ReadOne(server io.Reader, v interface{}) (*messageHeader, repl
 }
 
 // WriteOne writes a rewritten response to the client.
-func (r *ReplyRW) WriteOne(client io.Writer, h *messageHeader, prefix replyPrefix, oldDocLen int32, v interface{}) error {
+func (r *ReplyRW) WriteOne(client io.Writer, h *protocol.MessageHeader, prefix replyPrefix, oldDocLen int32, v interface{}) error {
 	newDoc, err := bson.Marshal(v)
 	if err != nil {
 		return err

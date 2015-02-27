@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mcuadros/exmongodb/protocol"
+
 	"github.com/facebookgo/rpool"
 	"github.com/facebookgo/stats"
 )
@@ -165,7 +167,7 @@ func (p *Proxy) serverCloseErrorHandler(err error) {
 // proxyMessage proxies a message, possibly it's response, and possibly a
 // follow up call.
 func (p *Proxy) proxyMessage(
-	h *messageHeader,
+	h *protocol.MessageHeader,
 	client net.Conn,
 	server net.Conn,
 	lastError *LastError,
@@ -175,14 +177,14 @@ func (p *Proxy) proxyMessage(
 	server.SetDeadline(deadline)
 	client.SetDeadline(deadline)
 
-	// OpQuery may need to be transformed and need special handling in order to
+	// protocol.OpQuery may need to be transformed and need special handling in order to
 	// make the proxy transparent.
-	if h.OpCode == OpQuery {
+	if h.OpCode == protocol.OpQuery {
 		stats.BumpSum(p.stats, "message.with.response", 1)
 		return p.ReplicaSet.ProxyQuery.Proxy(h, client, server, lastError)
 	}
 
-	// Anything besides a getlasterror call (which requires an OpQuery) resets
+	// Anything besides a getlasterror call (which requires an protocol.OpQuery) resets
 	// the lastError.
 	if lastError.Exists() {
 		p.Log.Debug("reset getLastError cache")
@@ -203,7 +205,7 @@ func (p *Proxy) proxyMessage(
 	// For Ops with responses we proxy the raw response message over.
 	if h.OpCode.HasResponse() {
 		stats.BumpSum(p.stats, "message.with.response", 1)
-		if err := copyMessage(client, server); err != nil {
+		if err := protocol.CopyMessage(client, server); err != nil {
 			p.Log.Error(err)
 			return err
 		}
@@ -333,7 +335,7 @@ func (p *Proxy) clientServeLoop(c net.Conn) {
 // We wait for upto ClientIdleTimeout in MessageTimeout increments and keep
 // checking if we're waiting to be closed. This ensures that at worse we
 // wait for MessageTimeout when closing even when we're idling.
-func (p *Proxy) idleClientReadHeader(c net.Conn) (*messageHeader, error) {
+func (p *Proxy) idleClientReadHeader(c net.Conn) (*protocol.MessageHeader, error) {
 	h, err := p.clientReadHeader(c, p.ReplicaSet.ClientIdleTimeout)
 	if err == errClientReadTimeout {
 		stats.BumpSum(p.stats, "client.idle.timeout", 1)
@@ -341,7 +343,7 @@ func (p *Proxy) idleClientReadHeader(c net.Conn) (*messageHeader, error) {
 	return h, err
 }
 
-func (p *Proxy) gleClientReadHeader(c net.Conn) (*messageHeader, error) {
+func (p *Proxy) gleClientReadHeader(c net.Conn) (*protocol.MessageHeader, error) {
 	h, err := p.clientReadHeader(c, p.ReplicaSet.GetLastErrorTimeout)
 	if err == errClientReadTimeout {
 		stats.BumpSum(p.stats, "client.gle.timeout", 1)
@@ -349,17 +351,17 @@ func (p *Proxy) gleClientReadHeader(c net.Conn) (*messageHeader, error) {
 	return h, err
 }
 
-func (p *Proxy) clientReadHeader(c net.Conn, timeout time.Duration) (*messageHeader, error) {
+func (p *Proxy) clientReadHeader(c net.Conn, timeout time.Duration) (*protocol.MessageHeader, error) {
 	t := stats.BumpTime(p.stats, "client.read.header.time")
 	type headerError struct {
-		header *messageHeader
+		header *protocol.MessageHeader
 		error  error
 	}
 	resChan := make(chan headerError)
 
 	c.SetReadDeadline(time.Now().Add(timeout))
 	go func() {
-		h, err := readHeader(c)
+		h, err := protocol.ReadHeader(c)
 		resChan <- headerError{header: h, error: err}
 	}()
 

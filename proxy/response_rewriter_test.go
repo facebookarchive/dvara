@@ -8,12 +8,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mcuadros/exmongodb/protocol"
+
 	"github.com/davecgh/go-spew/spew"
 	"github.com/facebookgo/ensure"
 	"github.com/facebookgo/gangliamr"
 	"github.com/facebookgo/inject"
 	"github.com/facebookgo/startstop"
-
 	"gopkg.in/mgo.v2/bson"
 )
 
@@ -50,7 +51,7 @@ func (f fakeReplicaStateCompare) SameIM(o *isMasterResponse) bool {
 	return f.sameIM
 }
 
-func fakeReader(h messageHeader, rest []byte) io.Reader {
+func fakeReader(h protocol.MessageHeader, rest []byte) io.Reader {
 	return bytes.NewReader(append(h.ToWire(), rest...))
 }
 
@@ -68,9 +69,9 @@ func fakeSingleDocReply(v interface{}) io.Reader {
 		},
 		b...,
 	)
-	h := messageHeader{
-		OpCode:        OpReply,
-		MessageLength: int32(headerLen + len(b)),
+	h := protocol.MessageHeader{
+		OpCode:        protocol.OpReply,
+		MessageLength: int32(protocol.HeaderLen + len(b)),
 	}
 	return fakeReader(h, b)
 }
@@ -94,18 +95,18 @@ func TestResponseRWReadOne(t *testing.T) {
 		},
 		{
 			Name:   "non reply op",
-			Server: bytes.NewReader((messageHeader{OpCode: OpDelete}).ToWire()),
+			Server: bytes.NewReader((protocol.MessageHeader{OpCode: protocol.OpDelete}).ToWire()),
 			Error:  "expected op REPLY, got DELETE",
 		},
 		{
 			Name:   "EOF before flags",
-			Server: bytes.NewReader((messageHeader{OpCode: OpReply}).ToWire()),
+			Server: bytes.NewReader((protocol.MessageHeader{OpCode: protocol.OpReply}).ToWire()),
 			Error:  "EOF",
 		},
 		{
 			Name: "more than 1 document",
 			Server: fakeReader(
-				messageHeader{OpCode: OpReply},
+				protocol.MessageHeader{OpCode: protocol.OpReply},
 				[]byte{
 					0, 0, 0, 0,
 					0, 0, 0, 0, 0, 0, 0, 0,
@@ -118,7 +119,7 @@ func TestResponseRWReadOne(t *testing.T) {
 		{
 			Name: "EOF before document",
 			Server: fakeReader(
-				messageHeader{OpCode: OpReply},
+				protocol.MessageHeader{OpCode: protocol.OpReply},
 				[]byte{
 					0, 0, 0, 0,
 					0, 0, 0, 0, 0, 0, 0, 0,
@@ -131,7 +132,7 @@ func TestResponseRWReadOne(t *testing.T) {
 		{
 			Name: "corrupted document",
 			Server: fakeReader(
-				messageHeader{OpCode: OpReply},
+				protocol.MessageHeader{OpCode: protocol.OpReply},
 				[]byte{
 					0, 0, 0, 0,
 					0, 0, 0, 0, 0, 0, 0, 0,
@@ -164,7 +165,7 @@ func TestResponseRWWriteOne(t *testing.T) {
 	cases := []struct {
 		Name   string
 		Client io.Writer
-		Header messageHeader
+		Header protocol.MessageHeader
 		Prefix replyPrefix
 		DocLen int32
 		Value  interface{}
@@ -309,7 +310,7 @@ func TestIsMasterResponseRewriterSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	actualOut := bson.M{}
-	doc := client.Bytes()[headerLen+len(emptyPrefix):]
+	doc := client.Bytes()[protocol.HeaderLen+len(emptyPrefix):]
 	if err := bson.Unmarshal(doc, &actualOut); err != nil {
 		t.Fatal(err)
 	}
@@ -430,7 +431,7 @@ func TestReplSetGetStatusResponseRewriterSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	actualOut := bson.M{}
-	doc := client.Bytes()[headerLen+len(emptyPrefix):]
+	doc := client.Bytes()[protocol.HeaderLen+len(emptyPrefix):]
 	if err := bson.Unmarshal(doc, &actualOut); err != nil {
 		t.Fatal(err)
 	}
@@ -466,19 +467,19 @@ func TestProxyQuery(t *testing.T) {
 
 	cases := []struct {
 		Name   string
-		Header *messageHeader
+		Header *protocol.MessageHeader
 		Client io.ReadWriter
 		Error  string
 	}{
 		{
 			Name:   "EOF while reading flags from client",
-			Header: &messageHeader{},
+			Header: &protocol.MessageHeader{},
 			Client: new(bytes.Buffer),
 			Error:  "EOF",
 		},
 		{
 			Name:   "EOF while reading collection name",
-			Header: &messageHeader{},
+			Header: &protocol.MessageHeader{},
 			Client: fakeReadWriter{
 				Reader: bytes.NewReader(
 					[]byte{0, 0, 0, 0}, // flags int32 before collection name
@@ -488,7 +489,7 @@ func TestProxyQuery(t *testing.T) {
 		},
 		{
 			Name:   "EOF while reading skip/return",
-			Header: &messageHeader{},
+			Header: &protocol.MessageHeader{},
 			Client: fakeReadWriter{
 				Reader: bytes.NewReader(
 					append(
@@ -501,7 +502,7 @@ func TestProxyQuery(t *testing.T) {
 		},
 		{
 			Name:   "EOF while reading query document",
-			Header: &messageHeader{},
+			Header: &protocol.MessageHeader{},
 			Client: fakeReadWriter{
 				Reader: io.MultiReader(
 					bytes.NewReader([]byte{0, 0, 0, 0}), // flags int32 before collection name
@@ -518,7 +519,7 @@ func TestProxyQuery(t *testing.T) {
 		},
 		{
 			Name:   "error while unmarshaling query document",
-			Header: &messageHeader{},
+			Header: &protocol.MessageHeader{},
 			Client: fakeReadWriter{
 				Reader: io.MultiReader(
 					bytes.NewReader([]byte{0, 0, 0, 0}), // flags int32 before collection name
