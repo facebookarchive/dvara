@@ -46,7 +46,7 @@ func (p *ProxyQuery) Proxy(
 	h *protocol.MessageHeader,
 	client io.ReadWriter,
 	server io.ReadWriter,
-	lastError *LastError,
+	lastError *protocol.LastError,
 ) error {
 
 	// https://github.com/mongodb/mongo/search?q=lastError.disableForCommand
@@ -159,23 +159,6 @@ func (p *ProxyQuery) Proxy(
 	return nil
 }
 
-// LastError holds the last known error.
-type LastError struct {
-	header *protocol.MessageHeader
-	rest   bytes.Buffer
-}
-
-// Exists returns true if this instance contains a cached error.
-func (l *LastError) Exists() bool {
-	return l.header != nil
-}
-
-// Reset resets the stored error clearing it.
-func (l *LastError) Reset() {
-	l.header = nil
-	l.rest.Reset()
-}
-
 // GetLastErrorRewriter handles getLastError requests and proxies, caches or
 // sends cached responses as necessary.
 type GetLastErrorRewriter struct {
@@ -188,7 +171,7 @@ func (r *GetLastErrorRewriter) Rewrite(
 	parts [][]byte,
 	client io.ReadWriter,
 	server io.ReadWriter,
-	lastError *LastError,
+	lastError *protocol.LastError,
 ) error {
 
 	if !lastError.Exists() {
@@ -211,16 +194,16 @@ func (r *GetLastErrorRewriter) Rewrite(
 		}
 
 		var err error
-		if lastError.header, err = protocol.ReadHeader(server); err != nil {
+		if lastError.Header, err = protocol.ReadHeader(server); err != nil {
 			r.Log.Error(err)
 			return err
 		}
-		pending = int64(lastError.header.MessageLength - protocol.HeaderLen)
-		if _, err = io.CopyN(&lastError.rest, server, pending); err != nil {
+		pending = int64(lastError.Header.MessageLength - protocol.HeaderLen)
+		if _, err = io.CopyN(&lastError.Rest, server, pending); err != nil {
 			r.Log.Error(err)
 			return err
 		}
-		r.Log.Debugf("caching new getLastError response: %s", lastError.rest.Bytes())
+		r.Log.Debugf("caching new getLastError response: %s", lastError.Rest.Bytes())
 	} else {
 		// We need to discard the pending bytes from the client from the query
 		// before we send it our cached response.
@@ -234,15 +217,15 @@ func (r *GetLastErrorRewriter) Rewrite(
 			return err
 		}
 		// Modify and send the cached response for this request.
-		lastError.header.ResponseTo = h.RequestID
-		r.Log.Debugf("using cached getLastError response: %s", lastError.rest.Bytes())
+		lastError.Header.ResponseTo = h.RequestID
+		r.Log.Debugf("using cached getLastError response: %s", lastError.Rest.Bytes())
 	}
 
-	if err := lastError.header.WriteTo(client); err != nil {
+	if err := lastError.Header.WriteTo(client); err != nil {
 		r.Log.Error(err)
 		return err
 	}
-	if _, err := client.Write(lastError.rest.Bytes()); err != nil {
+	if _, err := client.Write(lastError.Rest.Bytes()); err != nil {
 		r.Log.Error(err)
 		return err
 	}

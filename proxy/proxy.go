@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mcuadros/exmongodb/extensions"
 	"github.com/mcuadros/exmongodb/protocol"
 
 	"github.com/facebookgo/rpool"
@@ -34,6 +35,7 @@ type Proxy struct {
 	ClientListener net.Listener // Listener for incoming client connections
 	ProxyAddr      string       // Address for incoming client connections
 	MongoAddr      string       // Address for destination Mongo server
+	Extension      extensions.Extension
 
 	wg                      sync.WaitGroup
 	closed                  chan struct{}
@@ -170,8 +172,12 @@ func (p *Proxy) proxyMessage(
 	h *protocol.MessageHeader,
 	client net.Conn,
 	server net.Conn,
-	lastError *LastError,
+	lastError *protocol.LastError,
 ) error {
+	if p.Extension != nil {
+		p.Extension.Handle(h, client, server, lastError)
+	}
+
 	p.Log.Debugf("proxying message %s from %s for %s", h, client.RemoteAddr(), p)
 	deadline := time.Now().Add(p.ReplicaSet.MessageTimeout)
 	server.SetDeadline(deadline)
@@ -259,7 +265,7 @@ func (p *Proxy) clientServeLoop(c net.Conn) {
 		p.maxPerClientConnections.dec(remoteIP)
 	}()
 
-	var lastError LastError
+	var lastError protocol.LastError
 	for {
 		h, err := p.idleClientReadHeader(c)
 		if err != nil {

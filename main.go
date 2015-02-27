@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mcuadros/exmongodb/extensions"
 	"github.com/mcuadros/exmongodb/proxy"
 
 	"github.com/facebookgo/gangliamr"
@@ -46,6 +47,7 @@ func Main() error {
 		MinIdleConnections:      5,
 		ServerIdleTimeout:       5 * time.Minute,
 		ServerClosePoolSize:     5,
+		Extension:               &extensions.DumpExtension{},
 	}
 
 	fmt.Println(*maxConnections)
