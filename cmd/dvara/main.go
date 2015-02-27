@@ -8,11 +8,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/facebookgo/dvara"
 	"github.com/facebookgo/gangliamr"
 	"github.com/facebookgo/inject"
 	"github.com/facebookgo/startstop"
 	"github.com/facebookgo/stats"
+	"github.com/mcuadros/dvara"
 )
 
 func main() {
@@ -34,14 +34,20 @@ func Main() error {
 	flag.Parse()
 
 	replicaSet := dvara.ReplicaSet{
-		Addrs:               *addrs,
-		PortStart:           *portStart,
-		PortEnd:             *portEnd,
-		MessageTimeout:      *messageTimeout,
-		ClientIdleTimeout:   *clientIdleTimeout,
-		GetLastErrorTimeout: *getLastErrorTimeout,
-		MaxConnections:      *maxConnections,
+		Addrs:                   *addrs,
+		PortStart:               *portStart,
+		PortEnd:                 *portEnd,
+		MessageTimeout:          *messageTimeout,
+		ClientIdleTimeout:       *clientIdleTimeout,
+		GetLastErrorTimeout:     *getLastErrorTimeout,
+		MaxConnections:          *maxConnections,
+		MaxPerClientConnections: 250,
+		MinIdleConnections:      5,
+		ServerIdleTimeout:       5 * time.Minute,
+		ServerClosePoolSize:     5,
 	}
+
+	fmt.Println(*maxConnections)
 
 	var statsClient stats.HookClient
 	var log stdLogger
