@@ -12,7 +12,7 @@ import (
 	"github.com/facebookgo/inject"
 	"github.com/facebookgo/startstop"
 	"github.com/facebookgo/stats"
-	"github.com/mcuadros/dvara"
+	"github.com/mcuadros/dvara/proxy"
 )
 
 func main() {

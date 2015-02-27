@@ -170,7 +170,6 @@ func (p *Proxy) proxyMessage(
 	server net.Conn,
 	lastError *LastError,
 ) error {
-
 	p.Log.Debugf("proxying message %s from %s for %s", h, client.RemoteAddr(), p)
 	deadline := time.Now().Add(p.ReplicaSet.MessageTimeout)
 	server.SetDeadline(deadline)

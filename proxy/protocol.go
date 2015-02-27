@@ -82,6 +82,7 @@ type messageHeader struct {
 
 // ToWire converts the messageHeader to the wire protocol
 func (m messageHeader) ToWire() []byte {
+	fmt.Println("ToWire", m.OpCode)
 	var d [headerLen]byte
 	b := d[:]
 	setInt32(b, 0, m.MessageLength)
