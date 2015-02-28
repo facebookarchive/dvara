@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"strings"
 
 	"github.com/mcuadros/exmongodb/protocol"
 
@@ -288,14 +287,4 @@ func (r *ReplSetGetStatusResponseRewriter) Rewrite(client io.Writer, server io.R
 	}
 	q.Members = newMembers
 	return r.ReplyRW.WriteOne(client, h, prefix, docLen, q)
-}
-
-// case insensitive check for the specified key name in the top level.
-func hasKey(d bson.D, k string) bool {
-	for _, v := range d {
-		if strings.EqualFold(v.Name, k) {
-			return true
-		}
-	}
-	return false
 }

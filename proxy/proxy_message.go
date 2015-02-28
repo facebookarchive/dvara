@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"flag"
 	"io"
+	"strings"
 
 	"github.com/mcuadros/exmongodb/protocol"
 
@@ -201,4 +202,14 @@ func (p *ProxyMessage) proxyQuery(
 	}
 
 	return nil
+}
+
+// case insensitive check for the specified key name in the top level.
+func hasKey(d bson.D, k string) bool {
+	for _, v := range d {
+		if strings.EqualFold(v.Name, k) {
+			return true
+		}
+	}
+	return false
 }
