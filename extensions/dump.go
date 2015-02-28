@@ -17,18 +17,26 @@ func (e *DumpExtension) HandleOp(
 	server io.ReadWriter,
 	lastError *protocol.LastError,
 ) (cont bool, err error) {
-	fmt.Println("DUMP", header)
+	//	fmt.Println("DUMP", header)
 
 	return true, nil
 }
 
 func (e *DumpExtension) HandleBSON(
-	bson *bson.D,
+	d *bson.D,
 	client io.ReadWriter,
 	server io.ReadWriter,
 	lastError *protocol.LastError,
 ) (cont bool, err error) {
-	fmt.Println("BSON", bson)
+	return true, nil
+
+	for _, v := range *d {
+		if v.Name == "documents" {
+			values := v.Value.([]interface{})
+			m := values[0].(bson.D).Map()
+			fmt.Println("key", m)
+		}
+	}
 
 	return true, nil
 }

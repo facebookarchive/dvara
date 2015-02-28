@@ -10,10 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/facebookgo/gangliamr"
 	"github.com/facebookgo/metrics"
 	"github.com/facebookgo/stackerr"
-	"github.com/facebookgo/stats"
 )
 
 var hardRestart = flag.Bool(
@@ -45,9 +43,6 @@ type ReplicaSet struct {
 	Log                    Logger                  `inject:""`
 	ReplicaSetStateCreator *ReplicaSetStateCreator `inject:""`
 	ProxyMessage           *ProxyMessage           `inject:""`
-
-	// Stats if provided will be used to record interesting stats.
-	Stats stats.Client `inject:""`
 
 	// Comma separated list of mongo addresses. This is the list of "seed"
 	// servers, and one of two conditions must be met for each entry here -- it's
@@ -99,18 +94,6 @@ type ReplicaSet struct {
 	proxies     map[string]*Proxy
 	restarter   *sync.Once
 	lastState   *ReplicaSetState
-}
-
-// RegisterMetrics registers the available metrics.
-func (r *ReplicaSet) RegisterMetrics(registry *gangliamr.Registry) {
-	gangliaGroup := []string{"dvara"}
-	r.ClientsConnected = &gangliamr.Counter{
-		Name:   "clients_connected",
-		Title:  "Client Connected",
-		Units:  "conn",
-		Groups: gangliaGroup,
-	}
-	registry.Register(r.ClientsConnected)
 }
 
 // Start starts proxies to support this ReplicaSet.
@@ -285,20 +268,6 @@ func (r *ReplicaSet) proxyHostname() string {
 	}
 	r.Log.Warnf("hostname %s doesn't resolve to the current host", hostname)
 	return home
-}
-
-func (r *ReplicaSet) newListener() (net.Listener, error) {
-	for i := r.PortStart; i <= r.PortEnd; i++ {
-		listener, err := net.Listen("tcp", fmt.Sprintf(":%d", i))
-		if err == nil {
-			return listener, nil
-		}
-	}
-	return nil, fmt.Errorf(
-		"could not find a free port in range %d-%d",
-		r.PortStart,
-		r.PortEnd,
-	)
 }
 
 // add a proxy/mongo mapping.
