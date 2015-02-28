@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -11,17 +10,6 @@ import (
 	"github.com/mcuadros/exmongodb/protocol"
 
 	"gopkg.in/mgo.v2/bson"
-)
-
-var (
-	proxyAllQueries = flag.Bool(
-		"dvara.proxy-all",
-		false,
-		"if true all queries will be proxied and logger",
-	)
-
-	adminCollectionName = []byte("admin.$cmd\000")
-	cmdCollectionSuffix = []byte(".$cmd\000")
 )
 
 type testWriter struct {

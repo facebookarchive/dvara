@@ -15,6 +15,7 @@ import (
 	"github.com/facebookgo/startstop"
 	"github.com/facebookgo/stats"
 	"gopkg.in/mgo.v2"
+	"gopkg.in/mgo.v2/bson"
 )
 
 var disableSlowTests = os.Getenv("GO_RUN_LONG_TEST") == ""
@@ -140,8 +141,17 @@ type registerMetrics interface {
 
 type mockExtension struct{}
 
-func (e *mockExtension) Handle(
+func (e *mockExtension) HandleOp(
 	header *protocol.MessageHeader,
+	client io.ReadWriter,
+	server io.ReadWriter,
+	lastError *protocol.LastError,
+) (cont bool, err error) {
+	return true, nil
+}
+
+func (e *mockExtension) HandleBSON(
+	bson *bson.D,
 	client io.ReadWriter,
 	server io.ReadWriter,
 	lastError *protocol.LastError,

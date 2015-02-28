@@ -2,12 +2,24 @@ package proxy
 
 import (
 	"bytes"
+	"flag"
 	"io"
 
 	"github.com/mcuadros/exmongodb/protocol"
 
 	"github.com/davecgh/go-spew/spew"
 	"gopkg.in/mgo.v2/bson"
+)
+
+var (
+	proxyAllQueries = flag.Bool(
+		"dvara.proxy-all",
+		false,
+		"if true all queries will be proxied and logger",
+	)
+
+	adminCollectionName = []byte("admin.$cmd\000")
+	cmdCollectionSuffix = []byte(".$cmd\000")
 )
 
 // ProxyMessage proxies an protocol.OpQuery and a corresponding response.
@@ -28,7 +40,7 @@ func (p *ProxyMessage) Proxy(
 	lastError *protocol.LastError,
 ) error {
 	if p.Extension != nil {
-		p.Extension.Handle(h, client, server, lastError)
+		p.Extension.HandleOp(h, client, server, lastError)
 	}
 
 	// protocol.OpQuery may need to be transformed and need special handling in order to
@@ -75,7 +87,6 @@ func (p *ProxyMessage) proxyQuery(
 	server io.ReadWriter,
 	lastError *protocol.LastError,
 ) error {
-
 	// https://github.com/mongodb/mongo/search?q=lastError.disableForCommand
 	// Shows the logic we need to be in sync with. Unfortunately it isn't a
 	// simple check to determine this, and may change underneath us at the mongo
@@ -120,6 +131,10 @@ func (p *ProxyMessage) proxyQuery(
 			return err
 		}
 
+		if p.Extension != nil {
+			p.Extension.HandleBSON(&q, client, server, lastError)
+		}
+
 		p.Log.Debugf(
 			"buffered protocol.OpQuery for %s: %s",
 			fullCollectionName[:len(fullCollectionName)-1],
@@ -139,6 +154,7 @@ func (p *ProxyMessage) proxyQuery(
 		if hasKey(q, "isMaster") {
 			rewriter = p.IsMasterResponseRewriter
 		}
+
 		if bytes.Equal(adminCollectionName, fullCollectionName) && hasKey(q, "replSetGetStatus") {
 			rewriter = p.ReplSetGetStatusResponseRewriter
 		}
@@ -175,6 +191,7 @@ func (p *ProxyMessage) proxyQuery(
 		if err := rewriter.Rewrite(client, server); err != nil {
 			return err
 		}
+
 		return nil
 	}
 
