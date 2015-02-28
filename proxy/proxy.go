@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mcuadros/exmongodb/extensions"
 	"github.com/mcuadros/exmongodb/protocol"
 
 	"github.com/facebookgo/rpool"
@@ -35,7 +34,6 @@ type Proxy struct {
 	ClientListener net.Listener // Listener for incoming client connections
 	ProxyAddr      string       // Address for incoming client connections
 	MongoAddr      string       // Address for destination Mongo server
-	Extension      extensions.Extension
 
 	wg                      sync.WaitGroup
 	closed                  chan struct{}
@@ -166,60 +164,6 @@ func (p *Proxy) serverCloseErrorHandler(err error) {
 	p.Log.Error(err)
 }
 
-// proxyMessage proxies a message, possibly it's response, and possibly a
-// follow up call.
-func (p *Proxy) proxyMessage(
-	h *protocol.MessageHeader,
-	client net.Conn,
-	server net.Conn,
-	lastError *protocol.LastError,
-) error {
-	if p.Extension != nil {
-		p.Extension.Handle(h, client, server, lastError)
-	}
-
-	p.Log.Debugf("proxying message %s from %s for %s", h, client.RemoteAddr(), p)
-	deadline := time.Now().Add(p.ReplicaSet.MessageTimeout)
-	server.SetDeadline(deadline)
-	client.SetDeadline(deadline)
-
-	// protocol.OpQuery may need to be transformed and need special handling in order to
-	// make the proxy transparent.
-	if h.OpCode == protocol.OpQuery {
-		stats.BumpSum(p.stats, "message.with.response", 1)
-		return p.ReplicaSet.ProxyQuery.Proxy(h, client, server, lastError)
-	}
-
-	// Anything besides a getlasterror call (which requires an protocol.OpQuery) resets
-	// the lastError.
-	if lastError.Exists() {
-		p.Log.Debug("reset getLastError cache")
-		lastError.Reset()
-	}
-
-	// For other Ops we proxy the header & raw body over.
-	if err := h.WriteTo(server); err != nil {
-		p.Log.Error(err)
-		return err
-	}
-
-	if _, err := io.CopyN(server, client, int64(h.MessageLength-headerLen)); err != nil {
-		p.Log.Error(err)
-		return err
-	}
-
-	// For Ops with responses we proxy the raw response message over.
-	if h.OpCode.HasResponse() {
-		stats.BumpSum(p.stats, "message.with.response", 1)
-		if err := protocol.CopyMessage(client, server); err != nil {
-			p.Log.Error(err)
-			return err
-		}
-	}
-
-	return nil
-}
-
 // clientAcceptLoop accepts new clients and creates a clientServeLoop for each
 // new client that connects to the proxy.
 func (p *Proxy) clientAcceptLoop() {
@@ -286,7 +230,12 @@ func (p *Proxy) clientServeLoop(c net.Conn) {
 
 		scht := stats.BumpTime(p.stats, "server.conn.held.time")
 		for {
-			err := p.proxyMessage(h, c, serverConn, &lastError)
+			deadline := time.Now().Add(p.ReplicaSet.MessageTimeout)
+			c.SetDeadline(deadline)
+			serverConn.SetDeadline(deadline)
+
+			p.Log.Debugf("proxying message %s from %s for %s", h, c.RemoteAddr(), p)
+			err := p.ReplicaSet.ProxyMessage.Proxy(h, c, serverConn, &lastError)
 			if err != nil {
 				p.serverPool.Discard(serverConn)
 				p.Log.Error(err)

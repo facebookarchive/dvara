@@ -10,8 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mcuadros/exmongodb/extensions"
-
 	"github.com/facebookgo/gangliamr"
 	"github.com/facebookgo/metrics"
 	"github.com/facebookgo/stackerr"
@@ -46,8 +44,7 @@ var errNoAddrsGiven = errors.New("dvara: no seed addresses given for ReplicaSet"
 type ReplicaSet struct {
 	Log                    Logger                  `inject:""`
 	ReplicaSetStateCreator *ReplicaSetStateCreator `inject:""`
-	ProxyQuery             *ProxyQuery             `inject:""`
-	Extension              extensions.Extension
+	ProxyMessage           *ProxyMessage           `inject:""`
 
 	// Stats if provided will be used to record interesting stats.
 	Stats stats.Client `inject:""`
@@ -160,7 +157,6 @@ func (r *ReplicaSet) Start() error {
 			ClientListener: listener,
 			ProxyAddr:      r.proxyAddr(listener),
 			MongoAddr:      addr,
-			Extension:      r.Extension,
 		}
 		if err := r.add(p); err != nil {
 			return err

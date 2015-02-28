@@ -1,7 +1,7 @@
 package proxy
 
 import (
-	"net"
+	"io"
 
 	"github.com/mcuadros/exmongodb/protocol"
 )
@@ -9,8 +9,8 @@ import (
 type Extension interface {
 	Handle(
 		header *protocol.MessageHeader,
-		client net.Conn,
-		server net.Conn,
+		client io.ReadWriter,
+		server io.ReadWriter,
 		lastError *protocol.LastError,
 	) (cont bool, err error)
 }

@@ -1,11 +1,12 @@
 package proxy
 
 import (
+	"io"
 	"os"
 	"testing"
 	"time"
 
-	"gopkg.in/mgo.v2"
+	"github.com/mcuadros/exmongodb/protocol"
 
 	"github.com/facebookgo/ensure"
 	"github.com/facebookgo/gangliamr"
@@ -13,6 +14,7 @@ import (
 	"github.com/facebookgo/mgotest"
 	"github.com/facebookgo/startstop"
 	"github.com/facebookgo/stats"
+	"gopkg.in/mgo.v2"
 )
 
 var disableSlowTests = os.Getenv("GO_RUN_LONG_TEST") == ""
@@ -56,10 +58,12 @@ func newHarnessInternal(url string, s stopper, t testing.TB) *Harness {
 	}
 	var log nopLogger
 	var graph inject.Graph
+	var ext mockExtension
 	err := graph.Provide(
 		&inject.Object{Value: &log},
 		&inject.Object{Value: &replicaSet},
 		&inject.Object{Value: &stats.HookClient{}},
+		&inject.Object{Value: &ext},
 	)
 	ensure.Nil(t, err)
 	ensure.Nil(t, graph.Populate())
@@ -132,4 +136,15 @@ func (h *Harness) Dial(u string) *mgo.Session {
 
 type registerMetrics interface {
 	RegisterMetrics(r *gangliamr.Registry)
+}
+
+type mockExtension struct{}
+
+func (e *mockExtension) Handle(
+	header *protocol.MessageHeader,
+	client io.ReadWriter,
+	server io.ReadWriter,
+	lastError *protocol.LastError,
+) (cont bool, err error) {
+	return true, nil
 }

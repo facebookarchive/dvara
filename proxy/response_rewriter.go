@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"bytes"
 	"errors"
 	"flag"
 	"fmt"
@@ -10,8 +9,6 @@ import (
 	"strings"
 
 	"github.com/mcuadros/exmongodb/protocol"
-
-	"github.com/davecgh/go-spew/spew"
 
 	"gopkg.in/mgo.v2/bson"
 )
@@ -32,132 +29,6 @@ type testWriter struct {
 }
 
 func (t testWriter) Write(b []byte) (int, error) { return t.write(b) }
-
-// ProxyQuery proxies an protocol.OpQuery and a corresponding response.
-type ProxyQuery struct {
-	Log                              Logger                            `inject:""`
-	GetLastErrorRewriter             *GetLastErrorRewriter             `inject:""`
-	IsMasterResponseRewriter         *IsMasterResponseRewriter         `inject:""`
-	ReplSetGetStatusResponseRewriter *ReplSetGetStatusResponseRewriter `inject:""`
-}
-
-// Proxy proxies an protocol.OpQuery and a corresponding response.
-func (p *ProxyQuery) Proxy(
-	h *protocol.MessageHeader,
-	client io.ReadWriter,
-	server io.ReadWriter,
-	lastError *protocol.LastError,
-) error {
-
-	// https://github.com/mongodb/mongo/search?q=lastError.disableForCommand
-	// Shows the logic we need to be in sync with. Unfortunately it isn't a
-	// simple check to determine this, and may change underneath us at the mongo
-	// layer.
-	resetLastError := true
-
-	parts := [][]byte{h.ToWire()}
-
-	var flags [4]byte
-	if _, err := io.ReadFull(client, flags[:]); err != nil {
-		p.Log.Error(err)
-		return err
-	}
-	parts = append(parts, flags[:])
-
-	fullCollectionName, err := protocol.ReadCString(client)
-	if err != nil {
-		p.Log.Error(err)
-		return err
-	}
-	parts = append(parts, fullCollectionName)
-
-	var rewriter responseRewriter
-	if *proxyAllQueries || bytes.HasSuffix(fullCollectionName, cmdCollectionSuffix) {
-		var twoInt32 [8]byte
-		if _, err := io.ReadFull(client, twoInt32[:]); err != nil {
-			p.Log.Error(err)
-			return err
-		}
-		parts = append(parts, twoInt32[:])
-
-		queryDoc, err := protocol.ReadDocument(client)
-		if err != nil {
-			p.Log.Error(err)
-			return err
-		}
-		parts = append(parts, queryDoc)
-
-		var q bson.D
-		if err := bson.Unmarshal(queryDoc, &q); err != nil {
-			p.Log.Error(err)
-			return err
-		}
-
-		p.Log.Debugf(
-			"buffered protocol.OpQuery for %s: %s",
-			fullCollectionName[:len(fullCollectionName)-1],
-			spew.Sdump(q),
-		)
-
-		if hasKey(q, "getLastError") {
-			return p.GetLastErrorRewriter.Rewrite(
-				h,
-				parts,
-				client,
-				server,
-				lastError,
-			)
-		}
-
-		if hasKey(q, "isMaster") {
-			rewriter = p.IsMasterResponseRewriter
-		}
-		if bytes.Equal(adminCollectionName, fullCollectionName) && hasKey(q, "replSetGetStatus") {
-			rewriter = p.ReplSetGetStatusResponseRewriter
-		}
-
-		if rewriter != nil {
-			// If forShell is specified, we don't want to reset the last error. See
-			// comment above around resetLastError for details.
-			resetLastError = hasKey(q, "forShell")
-		}
-	}
-
-	if resetLastError && lastError.Exists() {
-		p.Log.Debug("reset getLastError cache")
-		lastError.Reset()
-	}
-
-	var written int
-	for _, b := range parts {
-		n, err := server.Write(b)
-		if err != nil {
-			p.Log.Error(err)
-			return err
-		}
-		written += n
-	}
-
-	pending := int64(h.MessageLength) - int64(written)
-	if _, err := io.CopyN(server, client, pending); err != nil {
-		p.Log.Error(err)
-		return err
-	}
-
-	if rewriter != nil {
-		if err := rewriter.Rewrite(client, server); err != nil {
-			return err
-		}
-		return nil
-	}
-
-	if err := protocol.CopyMessage(client, server); err != nil {
-		p.Log.Error(err)
-		return err
-	}
-
-	return nil
-}
 
 // GetLastErrorRewriter handles getLastError requests and proxies, caches or
 // sends cached responses as necessary.

@@ -47,10 +47,7 @@ func Main() error {
 		MinIdleConnections:      5,
 		ServerIdleTimeout:       5 * time.Minute,
 		ServerClosePoolSize:     5,
-		Extension:               &extensions.DumpExtension{},
 	}
-
-	fmt.Println(*maxConnections)
 
 	var statsClient stats.HookClient
 	var log stdLogger
@@ -59,6 +56,7 @@ func Main() error {
 		&inject.Object{Value: &log},
 		&inject.Object{Value: &replicaSet},
 		&inject.Object{Value: &statsClient},
+		&inject.Object{Value: &extensions.DumpExtension{}},
 	)
 	if err != nil {
 		return err

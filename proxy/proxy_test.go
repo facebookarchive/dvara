@@ -284,10 +284,12 @@ func TestNoAddrsGiven(t *testing.T) {
 	replicaSet := ReplicaSet{MaxConnections: 1}
 	var log nopLogger
 	var graph inject.Graph
+	var ext mockExtension
 	err := graph.Provide(
 		&inject.Object{Value: &log},
 		&inject.Object{Value: &replicaSet},
 		&inject.Object{Value: &stats.HookClient{}},
+		&inject.Object{Value: &ext},
 	)
 	ensure.Nil(t, err)
 	ensure.Nil(t, graph.Populate())
@@ -308,10 +310,12 @@ func TestSingleNodeWhenExpectingRS(t *testing.T) {
 	}
 	var log nopLogger
 	var graph inject.Graph
+	var ext mockExtension
 	err := graph.Provide(
 		&inject.Object{Value: &log},
 		&inject.Object{Value: &replicaSet},
 		&inject.Object{Value: &stats.HookClient{}},
+		&inject.Object{Value: &ext},
 	)
 	ensure.Nil(t, err)
 	ensure.Nil(t, graph.Populate())
