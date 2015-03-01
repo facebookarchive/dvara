@@ -12,5 +12,5 @@ func (l *stdLogger) Warn(args ...interface{})                  { log.Print(args.
 func (l *stdLogger) Warnf(format string, args ...interface{})  { log.Printf(format, args...) }
 func (l *stdLogger) Info(args ...interface{})                  { log.Print(args...) }
 func (l *stdLogger) Infof(format string, args ...interface{})  { log.Printf(format, args...) }
-func (l *stdLogger) Debug(args ...interface{})                 { log.Print(args...) }
-func (l *stdLogger) Debugf(format string, args ...interface{}) { log.Printf(format, args...) }
+func (l *stdLogger) Debug(args ...interface{})                 {}
+func (l *stdLogger) Debugf(format string, args ...interface{}) {}

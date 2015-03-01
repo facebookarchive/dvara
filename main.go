@@ -8,7 +8,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/facebookgo/dvara"
+	"github.com/mcuadros/exmongodb/extensions"
+	"github.com/mcuadros/exmongodb/proxy"
+
 	"github.com/facebookgo/gangliamr"
 	"github.com/facebookgo/inject"
 	"github.com/facebookgo/startstop"
@@ -27,20 +29,20 @@ func Main() error {
 	clientIdleTimeout := flag.Duration("client_idle_timeout", 60*time.Minute, "idle timeout for client connections")
 	getLastErrorTimeout := flag.Duration("get_last_error_timeout", time.Minute, "timeout for getLastError pinning")
 	maxConnections := flag.Uint("max_connections", 100, "maximum number of connections per mongo")
-	portStart := flag.Int("port_start", 6000, "start of port range")
-	portEnd := flag.Int("port_end", 6010, "end of port range")
-	addrs := flag.String("addrs", "localhost:27017", "comma separated list of mongo addresses")
 
 	flag.Parse()
 
-	replicaSet := dvara.ReplicaSet{
-		Addrs:               *addrs,
-		PortStart:           *portStart,
-		PortEnd:             *portEnd,
+	replicaSet := proxy.Proxy{
+		Log:                 &stdLogger{},
+		ProxyAddr:           "localhost:7000",
+		MongoAddr:           "localhost:27017",
 		MessageTimeout:      *messageTimeout,
 		ClientIdleTimeout:   *clientIdleTimeout,
 		GetLastErrorTimeout: *getLastErrorTimeout,
 		MaxConnections:      *maxConnections,
+		MinIdleConnections:  5,
+		ServerIdleTimeout:   5 * time.Minute,
+		ServerClosePoolSize: 5,
 	}
 
 	var statsClient stats.HookClient
@@ -50,6 +52,7 @@ func Main() error {
 		&inject.Object{Value: &log},
 		&inject.Object{Value: &replicaSet},
 		&inject.Object{Value: &statsClient},
+		&inject.Object{Value: &extensions.DumpExtension{}},
 	)
 	if err != nil {
 		return err
