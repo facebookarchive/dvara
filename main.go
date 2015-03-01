@@ -29,24 +29,20 @@ func Main() error {
 	clientIdleTimeout := flag.Duration("client_idle_timeout", 60*time.Minute, "idle timeout for client connections")
 	getLastErrorTimeout := flag.Duration("get_last_error_timeout", time.Minute, "timeout for getLastError pinning")
 	maxConnections := flag.Uint("max_connections", 100, "maximum number of connections per mongo")
-	portStart := flag.Int("port_start", 6000, "start of port range")
-	portEnd := flag.Int("port_end", 6010, "end of port range")
-	addrs := flag.String("addrs", "localhost:27017", "comma separated list of mongo addresses")
 
 	flag.Parse()
 
-	replicaSet := proxy.ReplicaSet{
-		Addrs:                   *addrs,
-		PortStart:               *portStart,
-		PortEnd:                 *portEnd,
-		MessageTimeout:          *messageTimeout,
-		ClientIdleTimeout:       *clientIdleTimeout,
-		GetLastErrorTimeout:     *getLastErrorTimeout,
-		MaxConnections:          *maxConnections,
-		MaxPerClientConnections: 250,
-		MinIdleConnections:      5,
-		ServerIdleTimeout:       5 * time.Minute,
-		ServerClosePoolSize:     5,
+	replicaSet := proxy.Proxy{
+		Log:                 &stdLogger{},
+		ProxyAddr:           "localhost:7000",
+		MongoAddr:           "localhost:27017",
+		MessageTimeout:      *messageTimeout,
+		ClientIdleTimeout:   *clientIdleTimeout,
+		GetLastErrorTimeout: *getLastErrorTimeout,
+		MaxConnections:      *maxConnections,
+		MinIdleConnections:  5,
+		ServerIdleTimeout:   5 * time.Minute,
+		ServerClosePoolSize: 5,
 	}
 
 	var statsClient stats.HookClient

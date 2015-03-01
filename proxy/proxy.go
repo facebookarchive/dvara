@@ -18,6 +18,7 @@ import (
 const headerLen = 16
 
 var (
+	errRSChanged          = errors.New("proxy: replset config changed")
 	errZeroMaxConnections = errors.New("proxy: MaxConnections cannot be 0")
 	errNormalClose        = errors.New("dvara: normal close")
 	errClientReadTimeout  = errors.New("dvara: client read timeout")
@@ -37,24 +38,26 @@ type Proxy struct {
 	// MinIdleConnections is the number of idle server connections we'll keep
 	// around.
 	MinIdleConnections uint
+	// ServerClosePoolSize is the number of goroutines that will handle closing
+	// server connections.
+	ServerClosePoolSize uint
 	// ServerIdleTimeout is the duration after which a server connection will be
 	// considered idle.
 	ServerIdleTimeout time.Duration
 	// GetLastErrorTimeout is how long we'll hold on to an acquired server
 	// connection expecting a possibly getLastError call.
 	GetLastErrorTimeout time.Duration
+	// ClientIdleTimeout is how long until we'll consider a client connection
+	// idle and disconnect and release it's resources.
+	ClientIdleTimeout time.Duration
 	// MessageTimeout is used to determine the timeout for a single message to be
 	// proxied.
 	MessageTimeout time.Duration
-	// ServerClosePoolSize is the number of goroutines that will handle closing
-	// server connections.
-	ServerClosePoolSize uint
 
 	listener net.Listener
 
-	closed                  chan struct{}
-	serverPool              rpool.Pool
-	maxPerClientConnections *maxPerClientConnections
+	closed     chan struct{}
+	serverPool rpool.Pool
 
 	sync.WaitGroup
 }
@@ -81,7 +84,7 @@ func (p *Proxy) Start() error {
 		Max:               p.MaxConnections,
 		MinIdle:           p.MinIdleConnections,
 		IdleTimeout:       p.ServerIdleTimeout,
-		ClosePoolSize:     p.ReplicaSet.ServerClosePoolSize,
+		ClosePoolSize:     p.ServerClosePoolSize,
 	}
 
 	go p.clientAcceptLoop()
@@ -125,13 +128,12 @@ func (p *Proxy) clientServeLoop(c net.Conn) {
 
 	defer func() {
 		p.Log.Infof("client %s disconnected from %s", c.RemoteAddr(), p)
-		p.wg.Done()
+		p.Done()
 		if err := c.Close(); err != nil {
 			p.Log.Error(err)
 		}
 	}()
 
-	var lastError protocol.LastError
 	for {
 		h, err := p.idleClientReadHeader(c)
 		if err != nil {
@@ -155,14 +157,13 @@ func (p *Proxy) clientServeLoop(c net.Conn) {
 			serverConn.SetDeadline(deadline)
 
 			p.Log.Debugf("proxying message %s from %s for %s", h, c.RemoteAddr(), p)
-			err := p.ReplicaSet.ProxyMessage.Proxy(h, c, serverConn, &lastError)
-			if err != nil {
+			if err := p.Handle(h, c, serverConn); err != nil {
 				p.serverPool.Discard(serverConn)
 				p.Log.Error(err)
 
-				if err == errRSChanged {
-					go p.ReplicaSet.Restart()
-				}
+				//if err == errRSChanged {
+				//	go p.ReplicaSet.Restart()
+				//}
 
 				return
 			}
@@ -207,17 +208,17 @@ func (p *Proxy) getServerConn() (net.Conn, error) {
 // We wait for upto ClientIdleTimeout in MessageTimeout increments and keep
 // checking if we're waiting to be closed. This ensures that at worse we
 // wait for MessageTimeout when closing even when we're idling.
-func (p *Proxy) idleClientReadHeader(c net.Conn) (*protocol.MessageHeader, error) {
-	return p.clientReadHeader(c, p.ReplicaSet.ClientIdleTimeout)
+func (p *Proxy) idleClientReadHeader(c net.Conn) (*protocol.MsgHeader, error) {
+	return p.clientReadHeader(c, p.ClientIdleTimeout)
 }
 
-func (p *Proxy) gleClientReadHeader(c net.Conn) (*protocol.MessageHeader, error) {
-	return p.clientReadHeader(c, p.ReplicaSet.GetLastErrorTimeout)
+func (p *Proxy) gleClientReadHeader(c net.Conn) (*protocol.MsgHeader, error) {
+	return p.clientReadHeader(c, p.GetLastErrorTimeout)
 }
 
-func (p *Proxy) clientReadHeader(c net.Conn, timeout time.Duration) (*protocol.MessageHeader, error) {
+func (p *Proxy) clientReadHeader(c net.Conn, timeout time.Duration) (*protocol.MsgHeader, error) {
 	type headerError struct {
-		header *protocol.MessageHeader
+		header *protocol.MsgHeader
 		error  error
 	}
 	resChan := make(chan headerError)
@@ -269,32 +270,35 @@ func (p *Proxy) Stop() error {
 }
 
 func (p *Proxy) stop(hard bool) error {
-	if err := p.ClientListener.Close(); err != nil {
+	if err := p.listener.Close(); err != nil {
 		return err
 	}
 	close(p.closed)
 	if !hard {
-		p.wg.Wait()
+		p.Wait()
 	}
 	p.serverPool.Close()
 	return nil
 }
 
 func (p *Proxy) checkRSChanged() bool {
-	addrs := p.ReplicaSet.lastState.Addrs()
-	r, err := p.ReplicaSet.ReplicaSetStateCreator.FromAddrs(addrs)
-	if err != nil {
-		p.Log.Errorf("all nodes possibly down?: %s", err)
-		return true
-	}
-
-	if err := r.AssertEqual(p.ReplicaSet.lastState); err != nil {
-		p.Log.Error(err)
-		go p.ReplicaSet.Restart()
-		return true
-	}
-
 	return false
+	/*
+		addrs := p.ReplicaSet.lastState.Addrs()
+		r, err := p.ReplicaSet.ReplicaSetStateCreator.FromAddrs(addrs)
+		if err != nil {
+			p.Log.Errorf("all nodes possibly down?: %s", err)
+			return true
+		}
+
+		if err := r.AssertEqual(p.ReplicaSet.lastState); err != nil {
+			p.Log.Error(err)
+			go p.ReplicaSet.Restart()
+			return true
+		}
+
+		return false
+	*/
 }
 
 // Open up a new connection to the server. Retry 7 times, doubling the sleep

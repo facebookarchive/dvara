@@ -12,10 +12,9 @@ import (
 type DumpExtension struct{}
 
 func (e *DumpExtension) HandleOp(
-	header *protocol.MessageHeader,
+	header *protocol.MsgHeader,
 	client io.ReadWriter,
 	server io.ReadWriter,
-	lastError *protocol.LastError,
 ) (cont bool, err error) {
 	//	fmt.Println("DUMP", header)
 
@@ -26,7 +25,6 @@ func (e *DumpExtension) HandleBSON(
 	d *bson.D,
 	client io.ReadWriter,
 	server io.ReadWriter,
-	lastError *protocol.LastError,
 ) (cont bool, err error) {
 	return true, nil
 
