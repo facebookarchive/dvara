@@ -119,13 +119,33 @@ type ReplicaSetStateCreator struct {
 
 // FromAddrs creates a ReplicaSetState from the given set of see addresses. It
 // requires the addresses to be part of the same Replica Set.
-func (c *ReplicaSetStateCreator) FromAddrs(addrs []string) (*ReplicaSetState, error) {
+func (c *ReplicaSetStateCreator) FromAddrs(addrs []string, replicaSetName string) (*ReplicaSetState, error) {
 	var r *ReplicaSetState
 	for _, addr := range addrs {
 		ar, err := NewReplicaSetState(addr)
 		if err != nil {
 			c.Log.Errorf("ignoring failure against address %s: %s", addr, err)
 			continue
+		}
+
+		if replicaSetName != "" {
+			if ar.lastRS == nil {
+				c.Log.Errorf(
+					"ignoring standalone node %q not in expected replset: %q",
+					addr,
+					replicaSetName,
+				)
+				continue
+			}
+			if ar.lastRS.Name != replicaSetName {
+				c.Log.Errorf(
+					"ignoring node %q not in expected replset: %q vs %q",
+					addr,
+					ar.lastRS.Name,
+					replicaSetName,
+				)
+				continue
+			}
 		}
 
 		// First successful address.

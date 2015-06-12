@@ -284,3 +284,32 @@ func TestSingleNodeNewReplicaSetStateAddrs(t *testing.T) {
 		t.Fatalf("unexpected addrs %v", addrs)
 	}
 }
+
+func TestIgnoreMismatchingReplicaSets(t *testing.T) {
+	t.Parallel()
+	creator := ReplicaSetStateCreator{
+		Log: nopLogger{},
+	}
+	replicaSet := mgotest.NewReplicaSet(2, t)
+	singleMongo := mgotest.NewStartedServer(t)
+	defer func() {
+		replicaSet.Stop()
+		singleMongo.Stop()
+	}()
+
+	urls := replicaSet.Addrs()
+	urls = append(urls, singleMongo.URL())
+
+	state, err := creator.FromAddrs(urls, "rs")
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+	if state.lastRS.Name != "rs" {
+		t.Fatalf("unexpected replicaset: %s", state.lastRS.Name)
+	}
+
+	_, err = creator.FromAddrs(urls, "")
+	if err == nil {
+		t.Fatalf("missing expected error: %s", err)
+	}
+}

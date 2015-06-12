@@ -91,6 +91,11 @@ type ReplicaSet struct {
 	// proxied.
 	MessageTimeout time.Duration
 
+	// Name is the name of the replica set to connect to. Nodes that are not part
+	// of this replica set will be ignored. If this is empty, the first replica set
+	// will be used
+	Name string
+
 	ClientsConnected metrics.Counter
 
 	proxyToReal map[string]string
@@ -126,7 +131,7 @@ func (r *ReplicaSet) Start() error {
 
 	rawAddrs := strings.Split(r.Addrs, ",")
 	var err error
-	r.lastState, err = r.ReplicaSetStateCreator.FromAddrs(rawAddrs)
+	r.lastState, err = r.ReplicaSetStateCreator.FromAddrs(rawAddrs, r.Name)
 	if err != nil {
 		return err
 	}

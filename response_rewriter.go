@@ -396,6 +396,7 @@ type statusMember struct {
 }
 
 type replSetGetStatusResponse struct {
+	Name    string                 `bson:"set,omitempty"`
 	Members []statusMember         `bson:"members"`
 	Extra   map[string]interface{} `bson:",inline"`
 }

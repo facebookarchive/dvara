@@ -112,7 +112,7 @@ func (p *Proxy) stop(hard bool) error {
 
 func (p *Proxy) checkRSChanged() bool {
 	addrs := p.ReplicaSet.lastState.Addrs()
-	r, err := p.ReplicaSet.ReplicaSetStateCreator.FromAddrs(addrs)
+	r, err := p.ReplicaSet.ReplicaSetStateCreator.FromAddrs(addrs, p.ReplicaSet.Name)
 	if err != nil {
 		p.Log.Errorf("all nodes possibly down?: %s", err)
 		return true
@@ -242,6 +242,13 @@ func (p *Proxy) clientServeLoop(c net.Conn) {
 		stats.BumpSum(p.stats, "client.rejected.max.connections", 1)
 		p.Log.Errorf("rejecting client connection due to max connections limit: %s", remoteIP)
 		return
+	}
+
+	// turn on TCP keep-alive and set it to the recommended period of 2 minutes
+	// http://docs.mongodb.org/manual/faq/diagnostics/#faq-keepalive
+	if conn, ok := c.(*net.TCPConn); ok {
+		conn.SetKeepAlivePeriod(2 * time.Minute)
+		conn.SetKeepAlive(true)
 	}
 
 	c = teeIf(fmt.Sprintf("client %s <=> %s", c.RemoteAddr(), p), c)
