@@ -43,6 +43,7 @@ type Harness struct {
 func newHarnessInternal(url string, s stopper, t testing.TB) *Harness {
 	replicaSet := ReplicaSet{
 		Addrs:                   url,
+		ListenAddr:              "",
 		PortStart:               2000,
 		PortEnd:                 3000,
 		MaxConnections:          5,

@@ -25,22 +25,30 @@ func main() {
 func Main() error {
 	messageTimeout := flag.Duration("message_timeout", 2*time.Minute, "timeout for one message to be proxied")
 	clientIdleTimeout := flag.Duration("client_idle_timeout", 60*time.Minute, "idle timeout for client connections")
+	serverIdleTimeout := flag.Duration("server_idle_timeout", 60*time.Minute, "idle timeout for server connections")
 	getLastErrorTimeout := flag.Duration("get_last_error_timeout", time.Minute, "timeout for getLastError pinning")
 	maxConnections := flag.Uint("max_connections", 100, "maximum number of connections per mongo")
+	maxPerClientConnections := flag.Uint("max_per_client_connections", 500, "maximum number of connections per client")
+	listenAddr := flag.String("listen", "", "address for listening, for example, 127.0.0.1")
 	portStart := flag.Int("port_start", 6000, "start of port range")
 	portEnd := flag.Int("port_end", 6010, "end of port range")
 	addrs := flag.String("addrs", "localhost:27017", "comma separated list of mongo addresses")
+	poolSize := flag.Uint("pool_size", 5, "pool size for server connections")
 
 	flag.Parse()
 
 	replicaSet := dvara.ReplicaSet{
 		Addrs:               *addrs,
+		ListenAddr:          *listenAddr,
 		PortStart:           *portStart,
 		PortEnd:             *portEnd,
 		MessageTimeout:      *messageTimeout,
 		ClientIdleTimeout:   *clientIdleTimeout,
+		ServerIdleTimeout:   *serverIdleTimeout,
 		GetLastErrorTimeout: *getLastErrorTimeout,
+		ServerClosePoolSize: *poolSize,
 		MaxConnections:      *maxConnections,
+		MaxPerClientConnections: *maxPerClientConnections,
 	}
 
 	var statsClient stats.HookClient
