@@ -30,17 +30,23 @@ func Main() error {
 	portStart := flag.Int("port_start", 6000, "start of port range")
 	portEnd := flag.Int("port_end", 6010, "end of port range")
 	addrs := flag.String("addrs", "localhost:27017", "comma separated list of mongo addresses")
+	maxPerClientConnections := flag.Uint("max_per_client_connections", 1, "maximum number of connections from a single client")
+	serverClosePoolSize := flag.Uint("server_close_pool_size", 1, "number of goroutines that will handle closing server connections.")
+	serverIdleTimeout := flag.Duration("server_idle_timeout", 60*time.Minute, "duration after which a server connection will be considered idle")
 
 	flag.Parse()
 
 	replicaSet := dvara.ReplicaSet{
-		Addrs:               *addrs,
-		PortStart:           *portStart,
-		PortEnd:             *portEnd,
-		MessageTimeout:      *messageTimeout,
-		ClientIdleTimeout:   *clientIdleTimeout,
-		GetLastErrorTimeout: *getLastErrorTimeout,
-		MaxConnections:      *maxConnections,
+		Addrs:                   *addrs,
+		PortStart:               *portStart,
+		PortEnd:                 *portEnd,
+		MessageTimeout:          *messageTimeout,
+		ClientIdleTimeout:       *clientIdleTimeout,
+		GetLastErrorTimeout:     *getLastErrorTimeout,
+		MaxConnections:          *maxConnections,
+		MaxPerClientConnections: *maxPerClientConnections,
+		ServerIdleTimeout:       *serverIdleTimeout,
+		ServerClosePoolSize:     *serverClosePoolSize,
 	}
 
 	var statsClient stats.HookClient
