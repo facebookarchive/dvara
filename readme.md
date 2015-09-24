@@ -9,4 +9,8 @@ To build from source you'll need [Go](http://golang.org/). With it you can insta
 
     go get github.com/facebookgo/dvara/cmd/dvara
 
-Library documentation: https://godoc.org/github.com/facebookgo/dvara
+To start the app, after install it, run:
+
+   dvara -addrs=$HOST:$PORT where host and port is location of mongo db instance
+
+Library documentation: https://godoc.org/github.com/intercom/dvara
