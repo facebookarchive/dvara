@@ -51,7 +51,7 @@ func NewReplicaSetState(addr string) (*ReplicaSetState, error) {
 
 	if r.lastRS != nil && len(r.lastRS.Members) == 1 {
 		n := r.lastRS.Members[0]
-		if n.State != "SECONDARY" && n.State != "PRIMARY" {
+		if n.State != "PRIMARY" || n.State != "SECONDARY" {
 			return nil, fmt.Errorf("single node RS in bad state: %s", spew.Sdump(r))
 		}
 	}
