@@ -14,20 +14,62 @@ import (
 	"github.com/facebookgo/stats"
 )
 
-var disableSlowTests = os.Getenv("GO_RUN_LONG_TEST") == ""
+var (
+	disableSlowTests = os.Getenv("GO_RUN_LONG_TEST") == ""
+	veryVerbose      = os.Getenv("VERY_VERBOSE") == "1"
+)
 
 type tLogger struct {
 	TB testing.TB
 }
 
-func (l *tLogger) Error(args ...interface{})                 { l.TB.Log(args...) }
-func (l *tLogger) Errorf(format string, args ...interface{}) { l.TB.Logf(format, args...) }
-func (l *tLogger) Warn(args ...interface{})                  { l.TB.Log(args...) }
-func (l *tLogger) Warnf(format string, args ...interface{})  { l.TB.Logf(format, args...) }
-func (l *tLogger) Info(args ...interface{})                  { l.TB.Log(args...) }
-func (l *tLogger) Infof(format string, args ...interface{})  { l.TB.Logf(format, args...) }
-func (l *tLogger) Debug(args ...interface{})                 { l.TB.Log(args...) }
-func (l *tLogger) Debugf(format string, args ...interface{}) { l.TB.Logf(format, args...) }
+func (l *tLogger) Error(args ...interface{}) {
+	if veryVerbose {
+		l.TB.Log(args...)
+	}
+}
+
+func (l *tLogger) Errorf(format string, args ...interface{}) {
+	if veryVerbose {
+		l.TB.Logf(format, args...)
+	}
+}
+
+func (l *tLogger) Warn(args ...interface{}) {
+	if veryVerbose {
+		l.TB.Log(args...)
+	}
+}
+
+func (l *tLogger) Warnf(format string, args ...interface{}) {
+	if veryVerbose {
+		l.TB.Logf(format, args...)
+	}
+}
+
+func (l *tLogger) Info(args ...interface{}) {
+	if veryVerbose {
+		l.TB.Log(args...)
+	}
+}
+
+func (l *tLogger) Infof(format string, args ...interface{}) {
+	if veryVerbose {
+		l.TB.Logf(format, args...)
+	}
+}
+
+func (l *tLogger) Debug(args ...interface{}) {
+	if veryVerbose {
+		l.TB.Log(args...)
+	}
+}
+
+func (l *tLogger) Debugf(format string, args ...interface{}) {
+	if veryVerbose {
+		l.TB.Logf(format, args...)
+	}
+}
 
 type stopper interface {
 	Stop()
