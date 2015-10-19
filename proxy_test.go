@@ -282,7 +282,7 @@ func TestZeroMaxConnections(t *testing.T) {
 func TestNoAddrsGiven(t *testing.T) {
 	t.Parallel()
 	replicaSet := ReplicaSet{MaxConnections: 1}
-	var log nopLogger
+	log := tLogger{TB: t}
 	var graph inject.Graph
 	err := graph.Provide(
 		&inject.Object{Value: &log},
@@ -306,7 +306,7 @@ func TestSingleNodeWhenExpectingRS(t *testing.T) {
 		Addrs:          fmt.Sprintf("127.0.0.1:%d,127.0.0.1:%d", mgoserver.Port, mgoserver.Port+1),
 		MaxConnections: 1,
 	}
-	var log nopLogger
+	log := tLogger{TB: t}
 	var graph inject.Graph
 	err := graph.Provide(
 		&inject.Object{Value: &log},

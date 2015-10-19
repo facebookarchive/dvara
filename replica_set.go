@@ -10,8 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/facebookgo/gangliamr"
-	"github.com/facebookgo/metrics"
 	"github.com/facebookgo/stackerr"
 	"github.com/facebookgo/stats"
 )
@@ -96,26 +94,12 @@ type ReplicaSet struct {
 	// will be used
 	Name string
 
-	ClientsConnected metrics.Counter
-
 	proxyToReal map[string]string
 	realToProxy map[string]string
 	ignoredReal map[string]ReplicaState
 	proxies     map[string]*Proxy
 	restarter   *sync.Once
 	lastState   *ReplicaSetState
-}
-
-// RegisterMetrics registers the available metrics.
-func (r *ReplicaSet) RegisterMetrics(registry *gangliamr.Registry) {
-	gangliaGroup := []string{"dvara"}
-	r.ClientsConnected = &gangliamr.Counter{
-		Name:   "clients_connected",
-		Title:  "Client Connected",
-		Units:  "conn",
-		Groups: gangliaGroup,
-	}
-	registry.Register(r.ClientsConnected)
 }
 
 // Start starts proxies to support this ReplicaSet.

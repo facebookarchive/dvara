@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/facebookgo/dvara"
-	"github.com/facebookgo/gangliamr"
 	"github.com/facebookgo/inject"
 	"github.com/facebookgo/startstop"
 	"github.com/facebookgo/stats"
@@ -59,13 +58,6 @@ func Main() error {
 	}
 	objects := graph.Objects()
 
-	// Temporarily setup the metrics against a test registry.
-	gregistry := gangliamr.NewTestRegistry()
-	for _, o := range objects {
-		if rmO, ok := o.Value.(registerMetrics); ok {
-			rmO.RegisterMetrics(gregistry)
-		}
-	}
 	if err := startstop.Start(objects, &log); err != nil {
 		return err
 	}
@@ -76,8 +68,4 @@ func Main() error {
 	<-ch
 	signal.Stop(ch)
 	return nil
-}
-
-type registerMetrics interface {
-	RegisterMetrics(r *gangliamr.Registry)
 }

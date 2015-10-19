@@ -254,9 +254,7 @@ func (p *Proxy) clientServeLoop(c net.Conn) {
 	c = teeIf(fmt.Sprintf("client %s <=> %s", c.RemoteAddr(), p), c)
 	p.Log.Infof("client %s connected to %s", c.RemoteAddr(), p)
 	stats.BumpSum(p.stats, "client.connected", 1)
-	p.ReplicaSet.ClientsConnected.Inc(1)
 	defer func() {
-		p.ReplicaSet.ClientsConnected.Dec(1)
 		p.Log.Infof("client %s disconnected from %s", c.RemoteAddr(), p)
 		p.wg.Done()
 		if err := c.Close(); err != nil {

@@ -8,7 +8,6 @@ import (
 	"gopkg.in/mgo.v2"
 
 	"github.com/facebookgo/ensure"
-	"github.com/facebookgo/gangliamr"
 	"github.com/facebookgo/inject"
 	"github.com/facebookgo/mgotest"
 	"github.com/facebookgo/startstop"
@@ -17,16 +16,18 @@ import (
 
 var disableSlowTests = os.Getenv("GO_RUN_LONG_TEST") == ""
 
-type nopLogger struct{}
+type tLogger struct {
+	TB testing.TB
+}
 
-func (n nopLogger) Error(args ...interface{})                 {}
-func (n nopLogger) Errorf(format string, args ...interface{}) {}
-func (n nopLogger) Warn(args ...interface{})                  {}
-func (n nopLogger) Warnf(format string, args ...interface{})  {}
-func (n nopLogger) Info(args ...interface{})                  {}
-func (n nopLogger) Infof(format string, args ...interface{})  {}
-func (n nopLogger) Debug(args ...interface{})                 {}
-func (n nopLogger) Debugf(format string, args ...interface{}) {}
+func (l *tLogger) Error(args ...interface{})                 { l.TB.Log(args...) }
+func (l *tLogger) Errorf(format string, args ...interface{}) { l.TB.Logf(format, args...) }
+func (l *tLogger) Warn(args ...interface{})                  { l.TB.Log(args...) }
+func (l *tLogger) Warnf(format string, args ...interface{})  { l.TB.Logf(format, args...) }
+func (l *tLogger) Info(args ...interface{})                  { l.TB.Log(args...) }
+func (l *tLogger) Infof(format string, args ...interface{})  { l.TB.Logf(format, args...) }
+func (l *tLogger) Debug(args ...interface{})                 { l.TB.Log(args...) }
+func (l *tLogger) Debugf(format string, args ...interface{}) { l.TB.Logf(format, args...) }
 
 type stopper interface {
 	Stop()
@@ -37,7 +38,7 @@ type Harness struct {
 	Stopper    stopper // This is either mgotest.Server or mgotest.ReplicaSet
 	ReplicaSet *ReplicaSet
 	Graph      *inject.Graph
-	Log        nopLogger
+	Log        *tLogger
 }
 
 func newHarnessInternal(url string, s stopper, t testing.TB) *Harness {
@@ -52,9 +53,9 @@ func newHarnessInternal(url string, s stopper, t testing.TB) *Harness {
 		ClientIdleTimeout:       5 * time.Minute,
 		MaxPerClientConnections: 250,
 		GetLastErrorTimeout:     5 * time.Minute,
-		MessageTimeout:          5 * time.Second,
+		MessageTimeout:          time.Minute,
 	}
-	var log nopLogger
+	log := tLogger{TB: t}
 	var graph inject.Graph
 	err := graph.Provide(
 		&inject.Object{Value: &log},
@@ -64,18 +65,13 @@ func newHarnessInternal(url string, s stopper, t testing.TB) *Harness {
 	ensure.Nil(t, err)
 	ensure.Nil(t, graph.Populate())
 	objects := graph.Objects()
-	gregistry := gangliamr.NewTestRegistry()
-	for _, o := range objects {
-		if rmO, ok := o.Value.(registerMetrics); ok {
-			rmO.RegisterMetrics(gregistry)
-		}
-	}
 	ensure.Nil(t, startstop.Start(objects, &log))
 	return &Harness{
 		T:          t,
 		Stopper:    s,
 		ReplicaSet: &replicaSet,
 		Graph:      &graph,
+		Log:        &log,
 	}
 }
 
@@ -110,7 +106,7 @@ func NewReplicaSetHarness(n uint, t testing.TB) *ReplicaSetHarness {
 
 func (h *Harness) Stop() {
 	defer h.Stopper.Stop()
-	ensure.Nil(h.T, startstop.Stop(h.Graph.Objects(), &h.Log))
+	ensure.Nil(h.T, startstop.Stop(h.Graph.Objects(), h.Log))
 }
 
 func (h *Harness) ProxySession() *mgo.Session {
@@ -128,8 +124,4 @@ func (h *Harness) Dial(u string) *mgo.Session {
 	session.SetSyncTimeout(time.Minute)
 	session.SetSocketTimeout(time.Minute)
 	return session
-}
-
-type registerMetrics interface {
-	RegisterMetrics(r *gangliamr.Registry)
 }

@@ -10,7 +10,6 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/facebookgo/ensure"
-	"github.com/facebookgo/gangliamr"
 	"github.com/facebookgo/inject"
 	"github.com/facebookgo/startstop"
 
@@ -146,7 +145,7 @@ func TestResponseRWReadOne(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		r := &ReplyRW{Log: nopLogger{}}
+		r := &ReplyRW{Log: &tLogger{TB: t}}
 		m := bson.M{}
 		_, _, _, err := r.ReadOne(c.Server, m)
 		if err == nil {
@@ -188,7 +187,7 @@ func TestResponseRWWriteOne(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		r := &ReplyRW{Log: nopLogger{}}
+		r := &ReplyRW{Log: &tLogger{TB: t}}
 		err := r.WriteOne(c.Client, &c.Header, c.Prefix, c.DocLen, c.Value)
 		if err == nil {
 			t.Errorf("was expecting an error for case %s", c.Name)
@@ -258,11 +257,11 @@ func TestIsMasterResponseRewriterFailures(t *testing.T) {
 
 	for _, c := range cases {
 		r := &IsMasterResponseRewriter{
-			Log:                 nopLogger{},
+			Log:                 &tLogger{TB: t},
 			ProxyMapper:         c.ProxyMapper,
 			ReplicaStateCompare: c.ReplicaStateCompare,
 			ReplyRW: &ReplyRW{
-				Log: nopLogger{},
+				Log: &tLogger{TB: t},
 			},
 		}
 		err := r.Rewrite(c.Client, c.Server)
@@ -296,11 +295,11 @@ func TestIsMasterResponseRewriterSuccess(t *testing.T) {
 		"foo":     "bar",
 	}
 	r := &IsMasterResponseRewriter{
-		Log:                 nopLogger{},
+		Log:                 &tLogger{TB: t},
 		ProxyMapper:         proxyMapper,
 		ReplicaStateCompare: fakeReplicaStateCompare{sameIM: true, sameRS: true},
 		ReplyRW: &ReplyRW{
-			Log: nopLogger{},
+			Log: &tLogger{TB: t},
 		},
 	}
 
@@ -340,7 +339,7 @@ func TestReplSetGetStatusResponseRewriterFailures(t *testing.T) {
 			Server: fakeSingleDocReply(
 				map[string]interface{}{
 					"members": []map[string]interface{}{
-						map[string]interface{}{
+						{
 							"name": "foo",
 						},
 					},
@@ -361,11 +360,11 @@ func TestReplSetGetStatusResponseRewriterFailures(t *testing.T) {
 
 	for _, c := range cases {
 		r := &ReplSetGetStatusResponseRewriter{
-			Log:                 nopLogger{},
+			Log:                 &tLogger{TB: t},
 			ProxyMapper:         c.ProxyMapper,
 			ReplicaStateCompare: c.ReplicaStateCompare,
 			ReplyRW: &ReplyRW{
-				Log: nopLogger{},
+				Log: &tLogger{TB: t},
 			},
 		}
 		err := r.Rewrite(c.Client, c.Server)
@@ -417,11 +416,11 @@ func TestReplSetGetStatusResponseRewriterSuccess(t *testing.T) {
 		},
 	}
 	r := &ReplSetGetStatusResponseRewriter{
-		Log:                 nopLogger{},
+		Log:                 &tLogger{TB: t},
 		ProxyMapper:         proxyMapper,
 		ReplicaStateCompare: fakeReplicaStateCompare{sameIM: true, sameRS: true},
 		ReplyRW: &ReplyRW{
-			Log: nopLogger{},
+			Log: &tLogger{TB: t},
 		},
 	}
 
@@ -444,7 +443,7 @@ func TestReplSetGetStatusResponseRewriterSuccess(t *testing.T) {
 func TestProxyQuery(t *testing.T) {
 	t.Parallel()
 	var p ProxyQuery
-	var log nopLogger
+	log := tLogger{TB: t}
 	var graph inject.Graph
 	err := graph.Provide(
 		&inject.Object{Value: &fakeProxyMapper{}},
@@ -455,12 +454,6 @@ func TestProxyQuery(t *testing.T) {
 	ensure.Nil(t, err)
 	ensure.Nil(t, graph.Populate())
 	objects := graph.Objects()
-	gregistry := gangliamr.NewTestRegistry()
-	for _, o := range objects {
-		if rmO, ok := o.Value.(registerMetrics); ok {
-			rmO.RegisterMetrics(gregistry)
-		}
-	}
 	ensure.Nil(t, startstop.Start(objects, &log))
 	defer startstop.Stop(objects, &log)
 

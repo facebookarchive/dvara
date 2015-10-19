@@ -286,9 +286,12 @@ func TestSingleNodeNewReplicaSetStateAddrs(t *testing.T) {
 }
 
 func TestIgnoreMismatchingReplicaSets(t *testing.T) {
+	if disableSlowTests {
+		t.Skip("disabled because it's slow")
+	}
 	t.Parallel()
 	creator := ReplicaSetStateCreator{
-		Log: nopLogger{},
+		Log: &tLogger{TB: t},
 	}
 	replicaSet := mgotest.NewReplicaSet(2, t)
 	singleMongo := mgotest.NewStartedServer(t)

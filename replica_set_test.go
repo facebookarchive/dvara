@@ -76,7 +76,7 @@ func TestProxyNotInReplicaSet(t *testing.T) {
 func TestAddSameProxyToReplicaSet(t *testing.T) {
 	t.Parallel()
 	r := &ReplicaSet{
-		Log:         nopLogger{},
+		Log:         &tLogger{TB: t},
 		proxyToReal: make(map[string]string),
 		realToProxy: make(map[string]string),
 		proxies:     make(map[string]*Proxy),
@@ -98,7 +98,7 @@ func TestAddSameProxyToReplicaSet(t *testing.T) {
 func TestAddSameMongoToReplicaSet(t *testing.T) {
 	t.Parallel()
 	r := &ReplicaSet{
-		Log:         nopLogger{},
+		Log:         &tLogger{TB: t},
 		proxyToReal: make(map[string]string),
 		realToProxy: make(map[string]string),
 		proxies:     make(map[string]*Proxy),
