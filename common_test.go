@@ -130,6 +130,14 @@ func NewSingleHarness(t testing.TB) *SingleHarness {
 	}
 }
 
+func NewSingleHarnessWithAuthEnabled(t testing.TB) *SingleHarness {
+	mgoserver := mgotest.NewStartedServer(t, "--auth")
+	return &SingleHarness{
+		Harness:   newHarnessInternal(mgoserver.URL(), mgoserver, t),
+		MgoServer: mgoserver,
+	}
+}
+
 type ReplicaSetHarness struct {
 	*Harness
 	MgoReplicaSet *mgotest.ReplicaSet
