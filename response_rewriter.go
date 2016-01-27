@@ -373,6 +373,27 @@ func (r *IsMasterResponseRewriter) Rewrite(client io.Writer, server io.Reader) e
 	}
 	q.Hosts = newHosts
 
+	var newPassives []string
+	passives, ok := q.Extra["passives"].([]interface{})
+
+	if ok {
+		for _, p := range passives {
+			newP, err := r.ProxyMapper.Proxy(p.(string))
+			if err != nil {
+				if pme, ok := err.(*ProxyMapperError); ok {
+					if pme.State != ReplicaStateArbiter {
+						r.Log.Errorf("dropping member %s in state %s", p, pme.State)
+					}
+					continue
+				}
+				// unknown err
+				return err
+			}
+			newPassives = append(newPassives, newP)
+		}
+		q.Extra["passives"] = newPassives
+	}
+
 	if q.Primary != "" {
 		// failure in mapping the primary is fatal
 		if q.Primary, err = r.ProxyMapper.Proxy(q.Primary); err != nil {
@@ -385,6 +406,7 @@ func (r *IsMasterResponseRewriter) Rewrite(client io.Writer, server io.Reader) e
 			return err
 		}
 	}
+
 	return r.ReplyRW.WriteOne(client, h, prefix, docLen, q)
 }
 
